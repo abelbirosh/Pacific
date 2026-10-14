@@ -82,7 +82,8 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 
 /* ---------- surface: the swell itself, under white type ---------- */
 .hero {
-  display: flex; flex-direction: column; min-height: 100svh;
+  /* the video fills the whole first screen; the swell into the next chapter starts just below the fold */
+  display: flex; flex-direction: column; min-height: calc(100svh + var(--swell));
   background: var(--navy); color: var(--paper);
 }
 .hero-video { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; }
