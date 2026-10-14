@@ -20,18 +20,27 @@ const AGENTS: Group[] = [
   { label: 'General agents', y: 184, items: ['Claude', 'ChatGPT', 'Gemini'] },
   { label: 'Financial agents', y: 368, items: ['Coinbase', 'Capitalise AI'] },
 ]
-const SERVICES = ['OSS', 'Data storage', 'Search API', 'Payment APIs', 'Voice-to-speech API']
-const DATA = ['Traditional web media', 'Data APIs']
 const LAYERS = ['Discovery', 'Authentication', 'Transaction', 'Assurance']
 
 const groupHeight = (n: number) => 36 + n * STEP
 const chipY = (g: Group, k: number) => g.y + 34 + k * STEP
 const wire = (n: number) => ({ '--i': n }) as CSSProperties
 
-/** A soft curve from a to b that leaves and arrives horizontally. */
-function curve([x1, y1]: Pt, [x2, y2]: Pt) {
-  const dx = Math.max(Math.abs(x2 - x1) * 0.5, 24)
-  return `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`
+const ARROW = 9
+
+/** A straight wire from a to b, stopping short so an arrowhead can sit with its tip on b. */
+function arrowLine([x1, y1]: Pt, [x2, y2]: Pt) {
+  const len = Math.hypot(x2 - x1, y2 - y1)
+  const k = (len - ARROW + 1) / len
+  return `M${x1},${y1} L${x1 + (x2 - x1) * k},${y1 + (y2 - y1) * k}`
+}
+
+/** The arrowhead at b, pointing along a→b. */
+function arrowHead([x1, y1]: Pt, [x2, y2]: Pt) {
+  const a = Math.atan2(y2 - y1, x2 - x1)
+  const side = (s: number): Pt => [x2 - ARROW * Math.cos(a) + s * 4.5 * Math.sin(a), y2 - ARROW * Math.sin(a) - s * 4.5 * Math.cos(a)]
+  const [l, r] = [side(1), side(-1)]
+  return `${x2},${y2} ${l[0]},${l[1]} ${r[0]},${r[1]}`
 }
 
 /** The point on a circle's edge facing p. */
@@ -67,7 +76,7 @@ function Stack({ x, w, group }: { x: number; w: number; group: Group }) {
       {group.items.map((item, k) => (
         <g key={item}>
           <rect className="dg-chip" x={x + 10} y={chipY(group, k)} width={w - 20} height={CHIP} />
-          <Label x={x + w / 2} y={chipY(group, k) + 23} anchor="middle">{item}</Label>
+          <Label x={x + w / 2} y={chipY(group, k) + 23} anchor="middle" size={item.length > 24 ? 12 : 13}>{item}</Label>
         </g>
       ))}
     </g>
@@ -99,12 +108,13 @@ const HUB_R = 56
 const CUSTOM_BAR = { x: 156, y: 508, w: 250, h: 44 }
 
 /* the providers, loose on the table: no grouping, each at its own angle */
-const LOOSE: { s: string; x: number; y: number; w: number; deg: number }[] = [
+const WEB_MEDIA = 'Traditional web media'
+const LOOSE: { s: string; x: number; y: number; w: number; deg: number; h?: number }[] = [
   { s: 'OSS', x: 452, y: 8, w: 72, deg: -7 },
   { s: 'Data storage', x: 538, y: 46, w: 102, deg: 6 },
   { s: 'Search API', x: 412, y: 112, w: 98, deg: 4 },
   { s: 'Voice-to-speech API', x: 470, y: 190, w: 162, deg: -5 },
-  { s: 'Traditional web media', x: 404, y: 288, w: 172, deg: 7 },
+  { s: WEB_MEDIA, x: 404, y: 282, w: 172, deg: 7, h: 52 },
   { s: 'Payment APIs', x: 524, y: 366, w: 112, deg: -9 },
   { s: 'Data APIs', x: 430, y: 452, w: 98, deg: 3 },
 ]
@@ -112,13 +122,16 @@ const looseAt = (name: string) => LOOSE.find((l) => l.s === name)!
 /** Where a wire meets a loose chip: the middle of its left edge, turned with the chip. */
 const looseEnd = (name: string): Pt => {
   const l = looseAt(name)
-  return turn([l.x + l.w / 2, l.y + CHIP / 2], l.deg, [l.x, l.y + CHIP / 2])
+  const h = l.h ?? CHIP
+  return turn([l.x + l.w / 2, l.y + h / 2], l.deg, [l.x, l.y + h / 2])
 }
 
+type Wire = { from: Pt; to: Pt; blocked?: boolean }
+
 export function BeforeDiagram() {
-  const wires: [Pt, Pt][] = []
-  const toHub = (from: Pt, hub: Pt) => wires.push([from, edge(hub, HUB_R, from)])
-  const fromHub = (hub: Pt, to: Pt) => wires.push([edge(hub, HUB_R, to), to])
+  const wires: Wire[] = []
+  const toHub = (from: Pt, hub: Pt) => wires.push({ from, to: edge(hub, HUB_R, from) })
+  const fromHub = (hub: Pt, to: Pt, blocked = false) => wires.push({ from: edge(hub, HUB_R, to), to, blocked })
   // personal agents reach for web search and GEO-optimized search
   for (let k = 0; k < 3; k++) { toHub(agentChip(0, k), WEB); toHub(agentChip(0, k), GEO) }
   // general agents lean on GEO-optimized search
@@ -126,26 +139,37 @@ export function BeforeDiagram() {
   // financial agents go through payment and trading software, and search the web too
   for (let k = 0; k < 2; k++) { toHub(agentChip(2, k), PAY); toHub(agentChip(2, k), WEB) }
   // and some skip the middle entirely with integrations of their own
-  wires.push([agentChip(0, 2), looseEnd('Search API')])
-  wires.push([agentChip(2, 0), looseEnd('Payment APIs')])
+  wires.push({ from: agentChip(0, 2), to: looseEnd('Search API') })
+  wires.push({ from: agentChip(2, 0), to: looseEnd('Payment APIs') })
   // GEO-optimized search feeds web search
-  wires.push([edge(GEO, HUB_R, WEB), edge(WEB, HUB_R, GEO)])
-  // web search fans out to everything on the table
-  for (const l of LOOSE) fromHub(WEB, looseEnd(l.s))
-  fromHub(GEO, looseEnd('Traditional web media'))
+  wires.push({ from: edge(GEO, HUB_R, WEB), to: edge(WEB, HUB_R, GEO) })
+  // web search fans out to everything on the table, except the web written for people, which turns agents away
+  for (const l of LOOSE) fromHub(WEB, looseEnd(l.s), l.s === WEB_MEDIA)
+  fromHub(GEO, looseEnd(WEB_MEDIA))
   fromHub(GEO, looseEnd('Search API'))
   fromHub(PAY, looseEnd('Payment APIs'))
   fromHub(PAY, looseEnd('Data APIs'))
   // custom agents wire into all three, by hand
   for (const [hub, dx] of [[WEB, 210], [GEO, 120], [PAY, 40]] as [Pt, number][]) {
     const from: Pt = [CUSTOM_BAR.x + dx, CUSTOM_BAR.y]
-    wires.push([from, edge(hub, HUB_R, from)])
+    wires.push({ from, to: edge(hub, HUB_R, from) })
   }
+  const blocked = wires.find((w) => w.blocked)!
+  const cross: Pt = [blocked.from[0] + (blocked.to[0] - blocked.from[0]) * 0.62, blocked.from[1] + (blocked.to[1] - blocked.from[1]) * 0.62]
 
   return (
     <svg className="diagram dg-before" viewBox={`0 0 ${W} ${H}`} role="img"
-      aria-label="Before Pacific: personal, general, financial and custom agents each wire themselves to web search, GEO-optimized search, payment and trading software and straight to individual services, which lie scattered with no common interface.">
-      {wires.map(([a, b], n) => <path key={n} className="dg-wire" d={curve(a, b)} pathLength={1} style={wire(n)} />)}
+      aria-label="Before Pacific: personal, general, financial and custom agents each wire themselves to web search, GEO-optimized search, payment and trading software and straight to individual services, which lie scattered with no common interface. Traditional web media is blocked to agents.">
+      {wires.map((w, n) => (
+        <g key={n} style={wire(n)}>
+          <path className="dg-wire" d={arrowLine(w.from, w.to)} pathLength={1} />
+          <polygon className="dg-head" points={arrowHead(w.from, w.to)} />
+        </g>
+      ))}
+      <g className="dg-block" transform={`translate(${cross[0]} ${cross[1]})`}>
+        <circle r={11} />
+        <path d="M-5,-5 L5,5 M5,-5 L-5,5" />
+      </g>
       <Agents customInColumn={false} />
       <g>
         <rect className="dg-panel" x={CUSTOM_BAR.x} y={CUSTOM_BAR.y} width={CUSTOM_BAR.w} height={CUSTOM_BAR.h} />
@@ -158,9 +182,12 @@ export function BeforeDiagram() {
         </g>
       ))}
       {LOOSE.map((l) => (
-        <g key={l.s} transform={`rotate(${l.deg} ${l.x + l.w / 2} ${l.y + CHIP / 2})`}>
-          <rect className="dg-chip dg-loose" x={l.x} y={l.y} width={l.w} height={CHIP} />
+        <g key={l.s} transform={`rotate(${l.deg} ${l.x + l.w / 2} ${l.y + (l.h ?? CHIP) / 2})`}>
+          <rect className={l.s === WEB_MEDIA ? 'dg-chip dg-loose dg-shut' : 'dg-chip dg-loose'} x={l.x} y={l.y} width={l.w} height={l.h ?? CHIP} />
           <Label x={l.x + l.w / 2} y={l.y + 23} anchor="middle">{l.s}</Label>
+          {l.s === WEB_MEDIA && (
+            <text className="dg-shut-note" x={l.x + l.w / 2} y={l.y + 41} textAnchor="middle" fontSize={12} fontWeight={600}>Blocked to agents</text>
+          )}
         </g>
       ))}
     </svg>
@@ -169,23 +196,26 @@ export function BeforeDiagram() {
 
 /* ---------- after: agents talk to one layer, and the layer talks to the providers ---------- */
 
-const SLAB = { x: 196, y: 0, w: 200, h: 552 }
-const RIGHT_X = 452
+const SLAB = { x: 196, y: 0, w: 180, h: 552 }
+const RIGHT_X = 420
 const RIGHT_W = W - RIGHT_X
-const SERVICE_G: Group = { label: 'Service providers', y: 0, items: SERVICES }
-const DATA_AFTER: Group = { label: 'Data providers', y: 276, items: DATA }
+const PROVIDERS: Group[] = [
+  { label: 'Service providers', y: 0, items: ['Data storage', 'Search API', 'Payment APIs', 'Voice-to-speech API'] },
+  { label: 'Data providers', y: 228, items: ['Data sources written for people', 'Data sources written for agents', 'Data APIs'] },
+  { label: 'Public providers', y: 412, items: ['Open source software', 'Custom agents'] },
+]
 
 export function AfterDiagram() {
   const mid = (g: Group) => g.y + groupHeight(g.items.length) / 2
   const left: number[] = [...AGENTS.map(mid), 530]
-  const right: number[] = [mid(SERVICE_G), mid(DATA_AFTER)]
+  const right: number[] = PROVIDERS.map(mid)
   const bandTop = 58
   const bandGap = 6
   const bandH = (SLAB.h - bandTop - 10 - bandGap * (LAYERS.length - 1)) / LAYERS.length
 
   return (
     <svg className="diagram dg-after" viewBox={`0 0 ${W} ${H}`} role="img"
-      aria-label="After Pacific: every agent connects to one Pacific layer of discovery, authentication, transaction and assurance, which connects to service providers and data providers.">
+      aria-label="After Pacific: every agent connects to one Pacific layer of discovery, authentication, transaction and assurance, which connects to service, data and public providers.">
       {left.map((y, n) => (
         <g key={y}>
           <path className="dg-wire" d={`M${COL_W},${y} L${SLAB.x},${y}`} pathLength={1} style={wire(n)} />
@@ -212,8 +242,7 @@ export function AfterDiagram() {
           )
         })}
       </g>
-      <Stack x={RIGHT_X} w={RIGHT_W} group={SERVICE_G} />
-      <Stack x={RIGHT_X} w={RIGHT_W} group={DATA_AFTER} />
+      {PROVIDERS.map((g) => <Stack key={g.label} x={RIGHT_X} w={RIGHT_W} group={g} />)}
     </svg>
   )
 }
