@@ -77,33 +77,28 @@ function Header() {
 function Hero() {
   return (
     <section className="chapter hero" id="top">
+      <video className="hero-video" autoPlay muted loop playsInline preload="auto"
+        poster={A + 'pacific-swell-poster.jpg'} aria-hidden="true">
+        <source src={A + 'pacific-swell-720.mp4'} type="video/mp4" media="(max-width: 600px)" />
+        <source src={A + 'pacific-swell-1080.mp4'} type="video/mp4" />
+      </video>
       <Header />
-      <div className="hero-grid">
+      <div className="hero-copy">
         <h1 className="title lines">
-          <span className="line"><span data-line style={i(0)}>Pacific x Alpha</span></span>
-          <span className="line"><span data-line style={i(1)}>Speedrun demo</span></span>
+          <span className="line">
+            <span data-line style={i(0)}>
+              Pacific x{' '}
+              <span className="alpha">
+                <span className="alpha-word">alpha</span>{' '}
+                <span className="alpha-run">speedrun</span>
+              </span>{' '}
+              demo
+            </span>
+          </span>
         </h1>
-        <div className="current" aria-label="Pictures of the Pacific">
-          <figure className="pebble p-wave" data-rise style={i(1)}>
-            <img src={A + 'under-the-wave-off-kanagawa-kanagawa-oki.jpg'} width={1920} height={1313}
-              alt="Hokusai's woodblock print of a great wave curling over three boats, Mount Fuji small in the distance" />
-          </figure>
-          <figure className="pebble p-clouds" data-rise style={i(2)}>
-            <img src={A + 'iss034e016601-stratocumulus-clouds-pacific-ocean.jpg'} width={1920} height={1277}
-              alt="Stratocumulus clouds over the Pacific Ocean seen from the International Space Station" />
-          </figure>
-          <figure className="pebble p-loop" data-rise style={i(3)}>
-            <video autoPlay muted loop playsInline preload="metadata"
-              poster={A + 'gravity-waves-propagating-through-the-stratocumulus-layer-poster.jpg'}
-              aria-label="Satellite loop of gravity waves rippling through clouds over the South Pacific">
-              <source src={A + 'gravity-waves-propagating-through-the-stratocumulus-layer.webm'} type="video/webm" />
-            </video>
-          </figure>
-          <figure className="pebble p-chart" data-rise style={i(4)}>
-            <img src={A + 'a-chart-of-the-discoveries-made-by.jpg'} width={1325} height={1600}
-              alt="Engraved eighteenth-century chart of the North and South Pacific from Captain Cook's voyages" />
-          </figure>
-        </div>
+        <p className="lede lines">
+          <span className="line"><span data-line style={i(1)}>The infrastructure for agent-to-agent services</span></span>
+        </p>
       </div>
       <Swell into="--foam" />
     </section>

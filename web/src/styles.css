@@ -15,11 +15,14 @@
   --muted: #4a4a4a;
 
   --font: 'Switzer', ui-sans-serif, system-ui, sans-serif;
+  /* the face of speedrun's own headlines, used only for the alpha speedrun lockup */
+  --font-alpha: 'Anton', 'Switzer', sans-serif;
 
   --step-small: clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem);
   --step-body: clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem);
   --step-head: clamp(2.25rem, 1.3rem + 3.6vw, 4.5rem);
-  --step-display: clamp(2.75rem, 5.8vw, 6.25rem);
+  --step-display: clamp(2.75rem, 7.2vw, 8.5rem);
+  --step-lede: clamp(1.25rem, 0.9rem + 1.3vw, 2.125rem);
   --step-mark: clamp(4.5rem, 17vw, 16rem);
 
   --margin: clamp(1rem, 3vw, 2.5rem);
@@ -77,32 +80,42 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .swell path { fill: var(--into); }
 .swell-back { opacity: 0.45; }
 
-/* ---------- surface: header and hero ---------- */
-.hero { background: var(--surface); }
+/* ---------- surface: the swell itself, under white type ---------- */
+.hero {
+  display: flex; flex-direction: column; min-height: 100svh;
+  background: var(--navy); color: var(--paper);
+}
+.hero-video { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; }
+/* a neutral scrim, only where the type sits: the bar at the top and the title at the foot */
+.hero::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(180deg, rgb(0 0 0 / 0.38), rgb(0 0 0 / 0) 26%, rgb(0 0 0 / 0) 46%, rgb(0 0 0 / 0.5));
+}
+.hero > .header, .hero-copy { position: relative; z-index: 1; }
+.hero > .swell { z-index: 1; }
+
 .header { display: flex; align-items: center; gap: clamp(1rem, 3vw, 2.5rem); padding: 1.25rem 0; }
 .wordmark { font-size: 1.375rem; font-weight: 600; letter-spacing: -0.04em; text-decoration: none; }
 .nav { display: flex; gap: 1.75rem; font-size: var(--step-small); font-weight: 500; }
 .header .button { margin-left: auto; }
 
-.hero-grid {
-  display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); align-items: center;
-  gap: var(--margin); min-height: calc(92svh - 5.5rem);
-}
-.title { font-size: var(--step-display); }
-.lines .line { display: block; overflow: hidden; padding-bottom: 0.1em; margin-bottom: -0.1em; }
+.hero-copy { margin-top: auto; padding-top: clamp(6rem, 18svh, 12rem); }
+.title { font-size: var(--step-display); line-height: 0.92; }
+.lines .line { display: block; overflow: hidden; padding: 0.1em 0; margin: -0.1em 0; }
 .lines [data-line] { display: block; }
+.lede { margin-top: clamp(1rem, 2.2vw, 2rem); font-size: var(--step-lede); font-weight: 500; letter-spacing: -0.025em; line-height: 1.2; }
+
+/* alpha speedrun, set the way their mark is: a heavy italic "alpha" with "speedrun" tucked under its tail */
+.alpha {
+  display: inline-grid; justify-items: end; font-family: var(--font-alpha); font-weight: 400;
+  letter-spacing: 0; transform: skewX(-12deg); transform-origin: 0 100%; margin: 0 0.14em 0 0.02em;
+}
+.alpha-word { font-size: 1.14em; line-height: 0.82; letter-spacing: -0.01em; }
+.alpha-run { font-size: 0.27em; line-height: 1; letter-spacing: 0.02em; margin-top: 0.12em; margin-right: 0.04em; }
 
 /* pictures sit in soft, water-worn shapes rather than boxes */
 .pebble { overflow: hidden; background: var(--foam); }
 .pebble img, .pebble video { width: 100%; height: 100%; object-fit: cover; }
-.current { position: relative; height: min(72svh, 46rem); }
-.current .pebble { position: absolute; }
-.p-wave { top: 6%; right: 4%; width: 64%; aspect-ratio: 1.3; border-radius: 46% 54% 44% 56% / 54% 46% 56% 46%; }
-.p-wave img { object-position: 35% 45%; }
-.p-clouds { top: 50%; left: 6%; width: 34%; aspect-ratio: 1; border-radius: 50%; }
-.p-loop { bottom: 2%; right: 8%; width: 40%; aspect-ratio: 1.7; border-radius: 999px; }
-.p-chart { top: 0; left: 14%; width: 22%; aspect-ratio: 0.82; border-radius: 48% 52% 50% 50% / 40% 40% 60% 60%; }
-.p-chart img { object-position: 50% 40%; }
 
 /* ---------- foam: what Pacific is ---------- */
 .what { background: var(--foam); padding-top: clamp(3rem, 6vw, 5rem); }
@@ -162,7 +175,6 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 /* ---------- motion: masked title, entrances, drifting swells, buoyant pictures ---------- */
 @media (prefers-reduced-motion: no-preference) {
   .js .lines [data-line] { transform: translateY(105%); animation: line-up 1000ms var(--ease-out) forwards; animation-delay: calc(var(--i, 0) * 120ms + 200ms); }
-  .js [data-rise] { opacity: 0; animation: rise 1200ms var(--ease-out) forwards; animation-delay: calc(var(--i, 0) * 120ms + 300ms); }
   .js [data-reveal] { opacity: 0; transform: translateY(28px); transition: opacity 900ms var(--ease-out), transform 1100ms var(--ease-out); transition-delay: calc(var(--i, 0) * 110ms); }
   .js [data-reveal].is-in { opacity: 1; transform: none; }
   .js .shutter[data-reveal] { transform: none; }
@@ -172,27 +184,16 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
   .swell-front { animation: drift 26s linear infinite; }
   .swell-back { animation: drift 38s linear infinite reverse; }
   .stream-line path { animation: flow 2.4s linear infinite; }
-  /* pictures rise in, then ride the swell: each bobs on its own period so they never move in step */
-  .js .current .pebble {
-    opacity: 0;
-    animation: rise 1200ms var(--ease-out) forwards, bob var(--bob, 9s) ease-in-out infinite alternate;
-    animation-delay: calc(var(--i, 0) * 120ms + 300ms), 0s;
-  }
-  .p-clouds { --bob: 11s; }
-  .p-loop { --bob: 8s; }
-  .p-chart { --bob: 13s; }
   .p-trieste, .p-map { animation: bob 10s ease-in-out infinite alternate; }
 }
 @keyframes line-up { to { transform: none; } }
-@keyframes rise { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
 @keyframes drift { to { transform: translateX(-50%); } }
 @keyframes flow { to { stroke-dashoffset: -32; } }
 @keyframes bob { from { translate: 0 0; } to { translate: 0 -10px; } }
 
 /* ---------- tablet ---------- */
 @media (max-width: 900px) {
-  .hero-grid { grid-template-columns: 1fr; min-height: 0; padding-top: 2rem; }
-  .current { height: 70vw; }
+  :root { --step-display: 9.5vw; }
   .what .head { grid-column: 1 / 13; }
   .p-log { grid-column: 1 / 13; border-radius: 80px 20px 80px 20px; }
   .stage { grid-template-columns: 1fr; }
@@ -201,14 +202,9 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 
 /* ---------- phone ---------- */
 @media (max-width: 640px) {
-  :root { --step-display: 11.5vw; --swell: 48px; }
+  :root { --step-display: 13.5vw; --swell: 48px; }
   .nav { display: none; }
   .header .button { min-height: 2.5rem; padding: 0 1.1rem; font-size: var(--step-small); }
-  .current { height: 92vw; }
-  .p-wave { width: 78%; right: 0; }
-  .p-clouds { width: 40%; left: 0; top: 54%; }
-  .p-loop { width: 52%; right: 0; }
-  .p-chart { width: 28%; left: 2%; }
   .what-grid { min-height: 0; padding-bottom: 2rem; }
   .stop-dot { width: 2.2rem; height: 2.2rem; }
   .stop-label { font-size: 1rem; }
