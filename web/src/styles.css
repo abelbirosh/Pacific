@@ -35,6 +35,8 @@
 
 /* ---------- reset ---------- */
 *, *::before, *::after { box-sizing: border-box; }
+/* the page stops hard at its top and bottom edges: no elastic pull past them */
+html, body { overscroll-behavior: none; }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--trench); color: var(--ink); font-family: var(--font);
@@ -78,31 +80,31 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .swell-back { opacity: 0.45; }
 
 /* ---------- surface: header and hero ---------- */
-.hero { background: var(--surface); }
 .header { display: flex; align-items: center; gap: clamp(1rem, 3vw, 2.5rem); padding: 1.25rem 0; }
 .wordmark { font-size: 1.375rem; font-weight: 600; letter-spacing: -0.04em; text-decoration: none; }
 .nav { display: flex; gap: 1.75rem; font-size: var(--step-small); font-weight: 500; }
-.header .button { margin-left: auto; }
+.header .nav { margin-left: auto; }
 
-.hero-grid {
-  display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); align-items: center;
-  gap: var(--margin); min-height: calc(92svh - 5.5rem);
+/* video block, white band of type, video block: dark swell from the very top of the page, surf beneath */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr); }
+.band { position: relative; overflow: hidden; background: var(--navy); }
+.band-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.band-dark { min-height: 40svh; padding: 0 var(--margin); color: var(--paper); }
+/* a neutral scrim keeps the menu readable on moving water */
+.band-dark::before {
+  content: ''; position: absolute; inset: 0 0 auto; height: 9rem; z-index: 0; pointer-events: none;
+  background: linear-gradient(to bottom, rgb(0 0 0 / 0.4), rgb(0 0 0 / 0));
 }
-.title { font-size: var(--step-display); }
-.lines .line { display: block; overflow: hidden; padding-bottom: 0.1em; margin-bottom: -0.1em; }
-.lines [data-line] { display: block; }
+.band-dark > .header { position: relative; z-index: 1; }
+.band-surf { min-height: 40svh; }
+.title-band { background: var(--paper); color: var(--ink); padding: clamp(1.5rem, 3.5vw, 3rem) var(--margin); }
+.title-run { font-size: var(--step-display); line-height: 0.9; letter-spacing: -0.045em; }
+.title-line { display: inline-block; white-space: nowrap; }
+.phone-break { display: none; }
 
 /* pictures sit in soft, water-worn shapes rather than boxes */
 .pebble { overflow: hidden; background: var(--foam); }
 .pebble img, .pebble video { width: 100%; height: 100%; object-fit: cover; }
-.current { position: relative; height: min(72svh, 46rem); }
-.current .pebble { position: absolute; }
-.p-wave { top: 6%; right: 4%; width: 64%; aspect-ratio: 1.3; border-radius: 46% 54% 44% 56% / 54% 46% 56% 46%; }
-.p-wave img { object-position: 35% 45%; }
-.p-clouds { top: 50%; left: 6%; width: 34%; aspect-ratio: 1; border-radius: 50%; }
-.p-loop { bottom: 2%; right: 8%; width: 40%; aspect-ratio: 1.7; border-radius: 999px; }
-.p-chart { top: 0; left: 14%; width: 22%; aspect-ratio: 0.82; border-radius: 48% 52% 50% 50% / 40% 40% 60% 60%; }
-.p-chart img { object-position: 50% 40%; }
 
 /* ---------- foam: what Pacific is ---------- */
 .what { background: var(--foam); padding-top: clamp(3rem, 6vw, 5rem); }
@@ -161,8 +163,6 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 
 /* ---------- motion: masked title, entrances, drifting swells, buoyant pictures ---------- */
 @media (prefers-reduced-motion: no-preference) {
-  .js .lines [data-line] { transform: translateY(105%); animation: line-up 1000ms var(--ease-out) forwards; animation-delay: calc(var(--i, 0) * 120ms + 200ms); }
-  .js [data-rise] { opacity: 0; animation: rise 1200ms var(--ease-out) forwards; animation-delay: calc(var(--i, 0) * 120ms + 300ms); }
   .js [data-reveal] { opacity: 0; transform: translateY(28px); transition: opacity 900ms var(--ease-out), transform 1100ms var(--ease-out); transition-delay: calc(var(--i, 0) * 110ms); }
   .js [data-reveal].is-in { opacity: 1; transform: none; }
   .js .shutter[data-reveal] { transform: none; }
@@ -173,14 +173,7 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
   .swell-back { animation: drift 38s linear infinite reverse; }
   .stream-line path { animation: flow 2.4s linear infinite; }
   /* pictures rise in, then ride the swell: each bobs on its own period so they never move in step */
-  .js .current .pebble {
-    opacity: 0;
-    animation: rise 1200ms var(--ease-out) forwards, bob var(--bob, 9s) ease-in-out infinite alternate;
-    animation-delay: calc(var(--i, 0) * 120ms + 300ms), 0s;
-  }
-  .p-clouds { --bob: 11s; }
-  .p-loop { --bob: 8s; }
-  .p-chart { --bob: 13s; }
+  .js
   .p-trieste, .p-map { animation: bob 10s ease-in-out infinite alternate; }
 }
 @keyframes line-up { to { transform: none; } }
@@ -191,9 +184,7 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 
 /* ---------- tablet ---------- */
 @media (max-width: 900px) {
-  .hero-grid { grid-template-columns: 1fr; min-height: 0; padding-top: 2rem; }
-  .current { height: 70vw; }
-  .what .head { grid-column: 1 / 13; }
+    .what .head { grid-column: 1 / 13; }
   .p-log { grid-column: 1 / 13; border-radius: 80px 20px 80px 20px; }
   .stage { grid-template-columns: 1fr; }
   .p-trieste { width: 60%; justify-self: center; }
@@ -203,12 +194,10 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 @media (max-width: 640px) {
   :root { --step-display: 11.5vw; --swell: 48px; }
   .nav { display: none; }
-  .header .button { min-height: 2.5rem; padding: 0 1.1rem; font-size: var(--step-small); }
-  .current { height: 92vw; }
-  .p-wave { width: 78%; right: 0; }
-  .p-clouds { width: 40%; left: 0; top: 54%; }
-  .p-loop { width: 52%; right: 0; }
-  .p-chart { width: 28%; left: 2%; }
+  .band-dark, .band-surf { min-height: 34svh; }
+  .title-run { font-size: 12.5vw; }
+  .title-line { white-space: normal; }
+  .phone-break { display: inline; }
   .what-grid { min-height: 0; padding-bottom: 2rem; }
   .stop-dot { width: 2.2rem; height: 2.2rem; }
   .stop-label { font-size: 1rem; }
