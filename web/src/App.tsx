@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { CREDITS, STAGES } from './data'
 
@@ -69,43 +69,60 @@ function Header() {
         <a className="link" href="#role">The role</a>
         <a className="link" href="#before-after">Before and after</a>
       </nav>
-      <a className="button" href="#demo">See the demo</a>
     </header>
   )
 }
 
-function Hero() {
+/** Size the one-line title so it runs the full width of the page, edge margin to edge margin. */
+function useFullWidthTitle() {
+  const ref = useRef<HTMLSpanElement>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    const box = el?.parentElement
+    if (!el || !box) return
+    const fit = () => {
+      if (window.innerWidth < 720) {
+        el.style.fontSize = ''
+        return
+      }
+      el.style.fontSize = '100px'
+      el.style.fontSize = `${Math.floor((100 * box.clientWidth) / el.scrollWidth * 100) / 100}px`
+    }
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(box)
+    document.fonts?.ready.then(fit)
+    return () => ro.disconnect()
+  }, [])
+  return ref
+}
+
+/** Big screens get the 4K master; phones and small windows get the 720p cut of the same clip. */
+function OceanVideo({ name, label }: { name: string; label: string }) {
+  const [big] = useState(() => window.matchMedia('(min-width: 1024px)').matches || window.screen.width * window.devicePixelRatio >= 2400)
   return (
-    <section className="chapter hero" id="top">
-      <Header />
-      <div className="hero-grid">
-        <h1 className="title lines">
-          <span className="line"><span data-line style={i(0)}>Pacific x Alpha</span></span>
-          <span className="line"><span data-line style={i(1)}>Speedrun demo</span></span>
-        </h1>
-        <div className="current" aria-label="Pictures of the Pacific">
-          <figure className="pebble p-wave" data-rise style={i(1)}>
-            <img src={A + 'under-the-wave-off-kanagawa-kanagawa-oki.jpg'} width={1920} height={1313}
-              alt="Hokusai's woodblock print of a great wave curling over three boats, Mount Fuji small in the distance" />
-          </figure>
-          <figure className="pebble p-clouds" data-rise style={i(2)}>
-            <img src={A + 'iss034e016601-stratocumulus-clouds-pacific-ocean.jpg'} width={1920} height={1277}
-              alt="Stratocumulus clouds over the Pacific Ocean seen from the International Space Station" />
-          </figure>
-          <figure className="pebble p-loop" data-rise style={i(3)}>
-            <video autoPlay muted loop playsInline preload="metadata"
-              poster={A + 'gravity-waves-propagating-through-the-stratocumulus-layer-poster.jpg'}
-              aria-label="Satellite loop of gravity waves rippling through clouds over the South Pacific">
-              <source src={A + 'gravity-waves-propagating-through-the-stratocumulus-layer.webm'} type="video/webm" />
-            </video>
-          </figure>
-          <figure className="pebble p-chart" data-rise style={i(4)}>
-            <img src={A + 'a-chart-of-the-discoveries-made-by.jpg'} width={1325} height={1600}
-              alt="Engraved eighteenth-century chart of the North and South Pacific from Captain Cook's voyages" />
-          </figure>
-        </div>
+    <video className="band-video" autoPlay muted loop playsInline preload="auto" poster={`${A}${name}-poster.jpg`} aria-label={label}>
+      <source src={`${A}${name}${big ? '-4k' : ''}.mp4`} type="video/mp4" />
+    </video>
+  )
+}
+
+function Hero() {
+  const title = useFullWidthTitle()
+  return (
+    <section className="hero" id="top">
+      <div className="band band-dark">
+        <OceanVideo name="ocean-dark" label="Dark blue ocean swell rising and falling" />
+        <Header />
       </div>
-      <Swell into="--foam" />
+      <div className="title-band">
+        <h1 className="title-run">
+          <span ref={title} className="title-line">Pacific x Alpha <br className="phone-break" />Speedrun demo</span>
+        </h1>
+      </div>
+      <div className="band band-surf">
+        <OceanVideo name="ocean-surf" label="Aerial view of white surf rolling in over dark water" />
+      </div>
     </section>
   )
 }
