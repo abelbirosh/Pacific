@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { CSSProperties } from 'react'
 import { CREDITS, STAGES } from './data'
+import { AfterDiagram, BeforeDiagram } from './Diagrams'
 
 const A = '/assets/'
 const i = (n: number) => ({ '--i': n }) as CSSProperties
@@ -49,11 +50,11 @@ function usePauseLoopsForReducedMotion() {
  * The edge where one depth of water meets the next: two swells in the next chapter's colour,
  * drawn twice as wide as the screen so they can drift sideways without a seam.
  */
-function Swell({ into }: { into: string }) {
+function Swell({ into, clip }: { into: string; clip?: string }) {
   const front = 'M0,64 C180,104 360,24 540,64 C720,104 900,24 1080,64 C1260,104 1440,24 1620,64 C1800,104 1980,24 2160,64 C2340,104 2520,24 2700,64 C2790,84 2835,74 2880,64 L2880,140 L0,140 Z'
   const back = 'M0,84 C240,44 480,116 720,80 C960,44 1200,116 1440,80 C1680,44 1920,116 2160,80 C2400,44 2640,116 2880,80 L2880,140 L0,140 Z'
   return (
-    <div className="swell" aria-hidden="true" style={{ '--into': `var(${into})` } as CSSProperties}>
+    <div className="swell" aria-hidden="true" style={{ '--into': `var(${into})`, clipPath: clip } as CSSProperties}>
       <svg className="swell-back" viewBox="0 0 2880 140" preserveAspectRatio="none"><path d={back} /></svg>
       <svg className="swell-front" viewBox="0 0 2880 140" preserveAspectRatio="none"><path d={front} /></svg>
     </div>
@@ -65,9 +66,9 @@ function Header() {
     <header className="header">
       <a className="wordmark" href="#top">Pacific</a>
       <nav className="nav" aria-label="Sections">
+        <a className="link" href="#before-after">Before and after</a>
         <a className="link" href="#what">What it is</a>
         <a className="link" href="#role">The role</a>
-        <a className="link" href="#before-after">Before and after</a>
       </nav>
     </header>
   )
@@ -99,7 +100,8 @@ function Hero() {
           <span className="line"><span data-line style={i(1)}>The infrastructure for agent-to-agent services</span></span>
         </p>
       </div>
-      <Swell into="--foam" />
+      <Swell into="--trench" clip="inset(0 49% 0 0)" />
+      <Swell into="--deep" clip="inset(0 0 0 51%)" />
     </section>
   )
 }
@@ -136,7 +138,7 @@ function Role() {
           ))}
         </ol>
       </div>
-      <Swell into="--deep" />
+      <Swell into="--navy" />
     </section>
   )
 }
@@ -146,18 +148,20 @@ function BeforeAfter() {
     <section className="chapter before-after" id="before-after" aria-labelledby="ba-head">
       <h2 id="ba-head" className="sr-only">Before and after</h2>
       <svg className="tide tide-wide" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M0,0 L54,0 C44,14 60,30 52,48 C44,66 62,82 50,100 L0,100 Z" />
+        <path d="M0,0 L51,0 C47,14 54,30 50,48 C46,66 54,82 49,100 L0,100 Z" />
       </svg>
       <svg className="tide tide-narrow" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
         <path d="M0,0 L100,0 L100,48 C78,58 64,40 44,50 C26,59 14,46 0,52 Z" />
       </svg>
-      <div className="ba-half ba-before" data-reveal>
-        <p className="ba-word">Before</p>
-      </div>
-      <div className="ba-half ba-after" data-reveal style={i(1)}>
-        <p className="ba-word">After</p>
-      </div>
-      <Swell into="--navy" />
+      <figure className="ba-half ba-before" data-reveal>
+        <figcaption className="ba-word">Before</figcaption>
+        <BeforeDiagram />
+      </figure>
+      <figure className="ba-half ba-after" data-reveal style={i(1)}>
+        <figcaption className="ba-word">After</figcaption>
+        <AfterDiagram />
+      </figure>
+      <Swell into="--foam" />
     </section>
   )
 }
@@ -207,9 +211,9 @@ export default function App() {
     <>
       <main>
         <Hero />
+        <BeforeAfter />
         <What />
         <Role />
-        <BeforeAfter />
         <Demo />
       </main>
       <Footer />
