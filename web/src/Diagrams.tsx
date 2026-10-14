@@ -21,7 +21,7 @@ const AGENTS: Group[] = [
   { label: 'Financial agents', y: 368, items: ['Coinbase', 'Capitalise AI'] },
 ]
 const SERVICES = ['OSS', 'Data storage', 'Search API', 'Payment APIs', 'Voice-to-speech API']
-const DATA = ['Sources written for people', 'Sources written for agents', 'Data APIs']
+const DATA = ['Traditional web media', 'Data APIs']
 const LAYERS = ['Discovery', 'Authentication', 'Transaction', 'Assurance']
 
 const groupHeight = (n: number) => 36 + n * STEP
@@ -62,11 +62,11 @@ function Label({ x, y, children, anchor = 'start', size = 13, weight = 500 }: {
 function Stack({ x, w, group }: { x: number; w: number; group: Group }) {
   return (
     <g>
-      <rect className="dg-panel" x={x} y={group.y} width={w} height={groupHeight(group.items.length)} rx={14} />
+      <rect className="dg-panel" x={x} y={group.y} width={w} height={groupHeight(group.items.length)} />
       <Label x={x + 12} y={group.y + 22} size={12}>{group.label}</Label>
       {group.items.map((item, k) => (
         <g key={item}>
-          <rect className="dg-chip" x={x + 10} y={chipY(group, k)} width={w - 20} height={CHIP} rx={9} />
+          <rect className="dg-chip" x={x + 10} y={chipY(group, k)} width={w - 20} height={CHIP} />
           <Label x={x + w / 2} y={chipY(group, k) + 23} anchor="middle">{item}</Label>
         </g>
       ))}
@@ -80,7 +80,7 @@ function Agents({ customInColumn }: { customInColumn: boolean }) {
       {AGENTS.map((g) => <Stack key={g.label} x={0} w={COL_W} group={g} />)}
       {customInColumn && (
         <g>
-          <rect className="dg-panel" x={0} y={508} width={COL_W} height={44} rx={14} />
+          <rect className="dg-panel" x={0} y={508} width={COL_W} height={44} />
           <Label x={COL_W / 2} y={535} anchor="middle">Custom agents</Label>
         </g>
       )}
@@ -96,40 +96,46 @@ const WEB: Pt = [282, 128]
 const GEO: Pt = [252, 280]
 const PAY: Pt = [280, 424]
 const HUB_R = 56
-const CARD = { x: 418, y: 20, w: 216, h: 170, deg: -10 }
-const CARD_C: Pt = [CARD.x + CARD.w / 2, CARD.y + CARD.h / 2]
-const DATA_G: Group = { label: 'Data providers', y: 250, items: DATA }
 const CUSTOM_BAR = { x: 156, y: 508, w: 250, h: 44 }
 
-/* service chips inside the card: two per row, the last one full width */
-const SERVICE_CHIPS = SERVICES.map((s, k) => {
-  const row = Math.floor(k / 2)
-  const full = k === SERVICES.length - 1
-  const w = full ? CARD.w - 20 : (CARD.w - 28) / 2
-  const x = CARD.x + 10 + (full || k % 2 === 0 ? 0 : w + 8)
-  return { s, x, y: CARD.y + 34 + row * STEP, w }
-})
+/* the providers, loose on the table: no grouping, each at its own angle */
+const LOOSE: { s: string; x: number; y: number; w: number; deg: number }[] = [
+  { s: 'OSS', x: 452, y: 8, w: 72, deg: -7 },
+  { s: 'Data storage', x: 538, y: 46, w: 102, deg: 6 },
+  { s: 'Search API', x: 412, y: 112, w: 98, deg: 4 },
+  { s: 'Voice-to-speech API', x: 470, y: 190, w: 162, deg: -5 },
+  { s: 'Traditional web media', x: 404, y: 288, w: 172, deg: 7 },
+  { s: 'Payment APIs', x: 524, y: 366, w: 112, deg: -9 },
+  { s: 'Data APIs', x: 430, y: 452, w: 98, deg: 3 },
+]
+const looseAt = (name: string) => LOOSE.find((l) => l.s === name)!
+/** Where a wire meets a loose chip: the middle of its left edge, turned with the chip. */
+const looseEnd = (name: string): Pt => {
+  const l = looseAt(name)
+  return turn([l.x + l.w / 2, l.y + CHIP / 2], l.deg, [l.x, l.y + CHIP / 2])
+}
 
 export function BeforeDiagram() {
   const wires: [Pt, Pt][] = []
   const toHub = (from: Pt, hub: Pt) => wires.push([from, edge(hub, HUB_R, from)])
+  const fromHub = (hub: Pt, to: Pt) => wires.push([edge(hub, HUB_R, to), to])
   // personal agents reach for web search and GEO-optimized search
   for (let k = 0; k < 3; k++) { toHub(agentChip(0, k), WEB); toHub(agentChip(0, k), GEO) }
   // general agents lean on GEO-optimized search
   for (let k = 0; k < 3; k++) toHub(agentChip(1, k), GEO)
   // financial agents go through payment and trading software, and search the web too
   for (let k = 0; k < 2; k++) { toHub(agentChip(2, k), PAY); toHub(agentChip(2, k), WEB) }
+  // and some skip the middle entirely with integrations of their own
+  wires.push([agentChip(0, 2), looseEnd('Search API')])
+  wires.push([agentChip(2, 0), looseEnd('Payment APIs')])
   // GEO-optimized search feeds web search
   wires.push([edge(GEO, HUB_R, WEB), edge(WEB, HUB_R, GEO)])
-  // web search fans out to every service and every data source
-  for (const c of SERVICE_CHIPS) {
-    const end = turn(CARD_C, CARD.deg, [c.x, c.y + CHIP / 2])
-    wires.push([edge(WEB, HUB_R, end), end])
-  }
-  DATA.forEach((_, k) => {
-    const end: Pt = [CARD.x + 10, chipY(DATA_G, k) + CHIP / 2]
-    wires.push([edge(WEB, HUB_R, end), end])
-  })
+  // web search fans out to everything on the table
+  for (const l of LOOSE) fromHub(WEB, looseEnd(l.s))
+  fromHub(GEO, looseEnd('Traditional web media'))
+  fromHub(GEO, looseEnd('Search API'))
+  fromHub(PAY, looseEnd('Payment APIs'))
+  fromHub(PAY, looseEnd('Data APIs'))
   // custom agents wire into all three, by hand
   for (const [hub, dx] of [[WEB, 210], [GEO, 120], [PAY, 40]] as [Pt, number][]) {
     const from: Pt = [CUSTOM_BAR.x + dx, CUSTOM_BAR.y]
@@ -138,11 +144,11 @@ export function BeforeDiagram() {
 
   return (
     <svg className="diagram dg-before" viewBox={`0 0 ${W} ${H}`} role="img"
-      aria-label="Before Pacific: personal, general, financial and custom agents each wire themselves to web search, GEO-optimized search and payment and trading software, which fan out to service providers and data providers in a tangle.">
+      aria-label="Before Pacific: personal, general, financial and custom agents each wire themselves to web search, GEO-optimized search, payment and trading software and straight to individual services, which lie scattered with no common interface.">
       {wires.map(([a, b], n) => <path key={n} className="dg-wire" d={curve(a, b)} pathLength={1} style={wire(n)} />)}
       <Agents customInColumn={false} />
       <g>
-        <rect className="dg-panel" x={CUSTOM_BAR.x} y={CUSTOM_BAR.y} width={CUSTOM_BAR.w} height={CUSTOM_BAR.h} rx={14} />
+        <rect className="dg-panel" x={CUSTOM_BAR.x} y={CUSTOM_BAR.y} width={CUSTOM_BAR.w} height={CUSTOM_BAR.h} />
         <Label x={CUSTOM_BAR.x + CUSTOM_BAR.w / 2} y={CUSTOM_BAR.y + 27} anchor="middle">Custom agents</Label>
       </g>
       {([[WEB, 'Web\nsearch'], [GEO, 'GEO-optimized\nsearch'], [PAY, 'Payment and\ntrading software']] as [Pt, string][]).map(([c, t]) => (
@@ -151,17 +157,12 @@ export function BeforeDiagram() {
           <Label x={c[0]} y={c[1] - 3} anchor="middle" size={12}>{t}</Label>
         </g>
       ))}
-      <g transform={`rotate(${CARD.deg} ${CARD_C[0]} ${CARD_C[1]})`}>
-        <rect className="dg-panel" x={CARD.x} y={CARD.y} width={CARD.w} height={CARD.h} rx={14} />
-        <Label x={CARD.x + 12} y={CARD.y + 22} size={12}>Service providers</Label>
-        {SERVICE_CHIPS.map((c) => (
-          <g key={c.s}>
-            <rect className="dg-chip" x={c.x} y={c.y} width={c.w} height={CHIP} rx={9} />
-            <Label x={c.x + c.w / 2} y={c.y + 23} anchor="middle">{c.s}</Label>
-          </g>
-        ))}
-      </g>
-      <Stack x={CARD.x} w={CARD.w} group={DATA_G} />
+      {LOOSE.map((l) => (
+        <g key={l.s} transform={`rotate(${l.deg} ${l.x + l.w / 2} ${l.y + CHIP / 2})`}>
+          <rect className="dg-chip dg-loose" x={l.x} y={l.y} width={l.w} height={CHIP} />
+          <Label x={l.x + l.w / 2} y={l.y + 23} anchor="middle">{l.s}</Label>
+        </g>
+      ))}
     </svg>
   )
 }
@@ -199,13 +200,13 @@ export function AfterDiagram() {
       ))}
       <Agents customInColumn />
       <g className="dg-slab">
-        <rect x={SLAB.x} y={SLAB.y} width={SLAB.w} height={SLAB.h} rx={18} />
+        <rect x={SLAB.x} y={SLAB.y} width={SLAB.w} height={SLAB.h} />
         <Label x={SLAB.x + 18} y={36} size={24} weight={600}>Pacific</Label>
         {LAYERS.map((l, k) => {
           const y = bandTop + k * (bandH + bandGap)
           return (
             <g key={l}>
-              <rect className="dg-band" x={SLAB.x + 10} y={y} width={SLAB.w - 20} height={bandH} rx={10} />
+              <rect className="dg-band" x={SLAB.x + 10} y={y} width={SLAB.w - 20} height={bandH} />
               <Label x={SLAB.x + 24} y={y + 30} size={16} weight={600}>{l}</Label>
             </g>
           )

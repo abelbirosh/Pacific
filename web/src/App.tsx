@@ -46,21 +46,6 @@ function usePauseLoopsForReducedMotion() {
   }, [])
 }
 
-/**
- * The edge where one depth of water meets the next: two swells in the next chapter's colour,
- * drawn twice as wide as the screen so they can drift sideways without a seam.
- */
-function Swell({ into, clip }: { into: string; clip?: string }) {
-  const front = 'M0,64 C180,104 360,24 540,64 C720,104 900,24 1080,64 C1260,104 1440,24 1620,64 C1800,104 1980,24 2160,64 C2340,104 2520,24 2700,64 C2790,84 2835,74 2880,64 L2880,140 L0,140 Z'
-  const back = 'M0,84 C240,44 480,116 720,80 C960,44 1200,116 1440,80 C1680,44 1920,116 2160,80 C2400,44 2640,116 2880,80 L2880,140 L0,140 Z'
-  return (
-    <div className="swell" aria-hidden="true" style={{ '--into': `var(${into})`, clipPath: clip } as CSSProperties}>
-      <svg className="swell-back" viewBox="0 0 2880 140" preserveAspectRatio="none"><path d={back} /></svg>
-      <svg className="swell-front" viewBox="0 0 2880 140" preserveAspectRatio="none"><path d={front} /></svg>
-    </div>
-  )
-}
-
 function Header() {
   return (
     <header className="header">
@@ -76,7 +61,7 @@ function Header() {
 
 function Hero() {
   return (
-    <section className="chapter hero" id="top">
+    <section className="hero" id="top">
       <video className="hero-video" autoPlay muted loop playsInline preload="auto"
         poster={A + 'pacific-swell-poster.jpg'} aria-hidden="true">
         <source src={A + 'pacific-swell-720.mp4'} type="video/mp4" media="(max-width: 600px)" />
@@ -100,105 +85,85 @@ function Hero() {
           <span className="line"><span data-line style={i(1)}>The infrastructure for agent-to-agent services</span></span>
         </p>
       </div>
-      <Swell into="--trench" clip="inset(0 49% 0 0)" />
-      <Swell into="--deep" clip="inset(0 0 0 51%)" />
-    </section>
-  )
-}
-
-function What() {
-  return (
-    <section className="chapter what" id="what" aria-labelledby="what-head">
-      <div className="what-grid">
-        <h2 id="what-head" className="head" data-reveal>What Pacific is</h2>
-        <figure className="pebble p-log shutter" data-reveal>
-          <img src={A + 'hms-dolphin-log-book-2.jpg'} width={1920} height={1032} loading="lazy"
-            alt="A handwritten page from the log book of HMS Dolphin, 1760s, recording wind, weather and work aboard" />
-        </figure>
-      </div>
-      <Swell into="--ocean" />
-    </section>
-  )
-}
-
-function Role() {
-  return (
-    <section className="chapter role" id="role" aria-labelledby="role-head">
-      <h2 id="role-head" className="head" data-reveal>The role it plays</h2>
-      <div className="stream">
-        <svg className="stream-line" viewBox="0 0 1200 240" preserveAspectRatio="none" aria-hidden="true">
-          <path d="M0,196 C70,196 90,150 150,150 S330,70 450,70 S630,170 750,170 S930,70 1050,70 S1160,110 1200,104" />
-        </svg>
-        <ol className="stops">
-          {STAGES.map((s, n) => (
-            <li key={s} className="stop" data-reveal style={i(n)}>
-              <span className="stop-dot" aria-hidden="true" />
-              <span className="stop-label">{s}</span>
-            </li>
-          ))}
-        </ol>
-      </div>
-      <Swell into="--navy" />
     </section>
   )
 }
 
 function BeforeAfter() {
   return (
-    <section className="chapter before-after" id="before-after" aria-labelledby="ba-head">
+    <section className="row" id="before-after" aria-labelledby="ba-head">
       <h2 id="ba-head" className="sr-only">Before and after</h2>
-      <svg className="tide tide-wide" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M0,0 L51,0 C47,14 54,30 50,48 C46,66 54,82 49,100 L0,100 Z" />
-      </svg>
-      <svg className="tide tide-narrow" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M0,0 L100,0 L100,48 C78,58 64,40 44,50 C26,59 14,46 0,52 Z" />
-      </svg>
-      <figure className="ba-half ba-before" data-reveal>
+      <figure className="tile ba-before" data-reveal>
         <figcaption className="ba-word">Before</figcaption>
         <BeforeDiagram />
       </figure>
-      <figure className="ba-half ba-after" data-reveal style={i(1)}>
+      <figure className="tile ba-after" data-reveal style={i(1)}>
         <figcaption className="ba-word">After</figcaption>
         <AfterDiagram />
       </figure>
-      <Swell into="--foam" />
+    </section>
+  )
+}
+
+function What() {
+  return (
+    <section className="row" id="what" aria-labelledby="what-head">
+      <div className="tile what-head" data-reveal>
+        <h2 id="what-head" className="head">What Pacific is</h2>
+      </div>
+      <figure className="tile tile-picture what-picture shutter" data-reveal style={i(1)}>
+        <img src={A + 'hms-dolphin-log-book-2.jpg'} width={1920} height={1032} loading="lazy"
+          alt="A handwritten page from the log book of HMS Dolphin, 1760s, recording wind, weather and work aboard" />
+      </figure>
+    </section>
+  )
+}
+
+function Role() {
+  return (
+    <section className="row" id="role" aria-labelledby="role-head">
+      <ol className="stages">
+        {STAGES.map((s, n) => (
+          <li key={s} className="tile stage" data-reveal style={i(n)}>
+            {n === 0 && <h2 id="role-head" className="head">The role it plays</h2>}
+            <span className="stage-word">{s}</span>
+          </li>
+        ))}
+      </ol>
     </section>
   )
 }
 
 function Demo() {
   return (
-    <section className="chapter demo" id="demo" aria-labelledby="demo-head">
-      <h2 id="demo-head" className="head" data-reveal>The demo</h2>
-      <div className="stage" data-reveal>
-        <figure className="pebble p-trieste">
-          <img src={A + 'bathyscaphe-trieste-with-uss-lewis-de-535.jpg'} width={1920} height={1520} loading="lazy"
-            alt="The bathyscaphe Trieste at the surface beside USS Lewis, before its dive into the Marianas Trench in 1960" />
-        </figure>
-        <div className="stage-slot" role="img" aria-label="Space for the live demo" />
+    <section className="row" id="demo" aria-labelledby="demo-head">
+      <div className="tile demo-head" data-reveal>
+        <h2 id="demo-head" className="head">The demo</h2>
       </div>
-      <Swell into="--trench" />
+      <figure className="tile tile-picture demo-picture" data-reveal style={i(1)}>
+        <img src={A + 'bathyscaphe-trieste-with-uss-lewis-de-535.jpg'} width={1920} height={1520} loading="lazy"
+          alt="The bathyscaphe Trieste at the surface beside USS Lewis, before its dive into the Marianas Trench in 1960" />
+      </figure>
+      <div className="tile demo-slot" role="img" aria-label="Space for the live demo" data-reveal style={i(2)} />
     </section>
   )
 }
 
 function Footer() {
   return (
-    <footer className="chapter trench">
-      <div className="trench-grid">
-        <p className="trench-mark" data-reveal>Pacific</p>
-        <figure className="pebble p-map shutter" data-reveal>
+    <footer className="board">
+      <div className="row">
+        <p className="tile foot-mark" data-reveal>Pacific</p>
+        <figure className="tile tile-picture foot-map shutter" data-reveal style={i(1)}>
           <img src={A + 'mariana-trench-map-1907.jpg'} width={1920} height={1529} loading="lazy"
             alt="Otto Krümmel's 1907 depth map of the Mariana Trench near Guam and Saipan" />
         </figure>
-      </div>
-      <div className="trench-foot">
-        <ul className="credits">
+        <ul className="tile credits">
           {CREDITS.map((c) => (
             <li key={c.url}><a className="link" href={c.url}>{c.title}</a>, {c.by}, {c.licence}</li>
           ))}
         </ul>
-        <a className="button button-light" href="#top">Back to the surface</a>
+        <a className="tile foot-action" href="#top">Back to the surface</a>
       </div>
     </footer>
   )
@@ -211,10 +176,13 @@ export default function App() {
     <>
       <main>
         <Hero />
-        <BeforeAfter />
-        <What />
-        <Role />
-        <Demo />
+        {/* below the video the page is one board: flat tiles butted together, the gaps are the lines */}
+        <div className="board">
+          <BeforeAfter />
+          <What />
+          <Role />
+          <Demo />
+        </div>
       </main>
       <Footer />
     </>
