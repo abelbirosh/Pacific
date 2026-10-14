@@ -1,0 +1,18 @@
+{
+  "title": "Audit the upload service",
+  "description": "Security audit the upload service code and its dependencies.",
+  "skill": "security_audit",
+  "budget": 20,
+  "inputs": {
+    "files": {
+      "app.py": "import subprocess\nimport pickle\nfrom flask import Flask, request\n\napp = Flask(__name__)\nAWS_KEY = \"AKIAABCDEFGHIJKLMNOP\"\n\n@app.route('/convert')\ndef convert():\n    name = request.args['file']\n    return subprocess.check_output('convert ' + name + ' out.png', shell=True)\n\n@app.route('/load', methods=['POST'])\ndef load():\n    return str(pickle.loads(request.data))\n\nif __name__ == '__main__':\n    app.run(debug=True)\n"
+    },
+    "requirements": "flask==0.12.2\nrequests==2.19.0\njinja2==2.10\n",
+    "output_key": "security/upload-service.md"
+  },
+  "checks": [
+    {"type": "storage_contains", "key": "security/upload-service.md", "text": ["Verdict", "aws-access-key", "B602", "requests==2.19.0"]},
+    {"type": "output_contains", "text": "FAIL: high-severity issues found"},
+    {"type": "used_service", "service": "ocean_shield"}
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "title": "Count primes",
+  "description": "Run a program that counts the primes below 100,000 and save the output.",
+  "skill": "code_run",
+  "budget": 5,
+  "inputs": {
+    "code": "def count(n):\n    sieve = bytearray([1]) * n\n    sieve[0:2] = b'\\x00\\x00'\n    for i in range(2, int(n ** 0.5) + 1):\n        if sieve[i]:\n            sieve[i*i::i] = bytearray(len(sieve[i*i::i]))\n    return sum(sieve)\n\nprint(f'primes below 100000: {count(100_000)}')\n",
+    "output_key": "runs/primes.txt"
+  },
+  "checks": [
+    {"type": "storage_contains", "key": "runs/primes.txt", "text": "primes below 100000: 9592"},
+    {"type": "used_service", "service": "ocean_sandbox"}
+  ]
+}

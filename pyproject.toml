@@ -1,0 +1,25 @@
+[project]
+name = "pacific"
+version = "0.1.0"
+description = "A wave-dollar economy where agents buy services to complete tasks on a budget"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+    "beautifulsoup4>=4.12",
+    "bandit>=1.7",
+]
+
+[project.scripts]
+pacific = "pacific.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

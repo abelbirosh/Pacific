@@ -1,0 +1,30 @@
+{
+  "title": "Shop database",
+  "description": "Create the database for a small shop with users and orders, and seed it.",
+  "skill": "database",
+  "budget": 10,
+  "inputs": {
+    "db": "shop",
+    "schema_sql": "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE NOT NULL); CREATE TABLE orders (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), total_cents INTEGER NOT NULL);",
+    "seed": {
+      "users": [
+        {"id": 1, "name": "Ada", "email": "ada@example.com"},
+        {"id": 2, "name": "Linus", "email": "linus@example.com"},
+        {"id": 3, "name": "Grace", "email": "grace@example.com"},
+        {"id": 4, "name": "Ken", "email": "ken@example.com"},
+        {"id": 5, "name": "Barbara", "email": "barbara@example.com"}
+      ],
+      "orders": [
+        {"user_id": 1, "total_cents": 1999},
+        {"user_id": 3, "total_cents": 4500},
+        {"user_id": 3, "total_cents": 250}
+      ]
+    }
+  },
+  "checks": [
+    {"type": "db_columns", "db": "shop", "table": "users", "columns": ["id", "name", "email"]},
+    {"type": "db_min_rows", "db": "shop", "table": "users", "min": 5},
+    {"type": "db_query_equals", "db": "shop", "sql": "SELECT SUM(total_cents) FROM orders", "expected": 6749},
+    {"type": "used_service", "service": "ocean_db"}
+  ]
+}

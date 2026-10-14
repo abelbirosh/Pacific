@@ -1,0 +1,17 @@
+{
+  "title": "Outsourced research",
+  "description": "Research how to store passwords securely in Python and write a brief. Hire a specialist.",
+  "skill": "research",
+  "budget": 20,
+  "inputs": {
+    "query": "python password hashing argon2 bcrypt",
+    "num_results": 4,
+    "output_key": "research/password-hashing.md",
+    "delegate": true
+  },
+  "checks": [
+    {"type": "storage_contains", "key": "research/password-hashing.md", "text": "## Sources"},
+    {"type": "output_contains", "text": "Hired"},
+    {"type": "max_spend", "amount": 20}
+  ]
+}

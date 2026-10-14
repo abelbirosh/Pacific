@@ -1,0 +1,17 @@
+{
+  "title": "Rate limiting brief",
+  "description": "Research rate limiting strategies for FastAPI APIs and write a sourced brief.",
+  "skill": "research",
+  "budget": 15,
+  "inputs": {
+    "query": "fastapi rate limiting",
+    "num_results": 5,
+    "output_key": "research/rate-limiting.md"
+  },
+  "checks": [
+    {"type": "storage_contains", "key": "research/rate-limiting.md", "text": ["# Research", "## Sources"]},
+    {"type": "storage_min_bytes", "key": "research/rate-limiting.md", "min": 500},
+    {"type": "used_service", "service": ["ocean_exa", "ocean_tavily", "ocean_brave"]},
+    {"type": "max_spend", "amount": 15}
+  ]
+}

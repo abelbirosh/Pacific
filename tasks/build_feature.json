@@ -1,0 +1,41 @@
+{
+  "title": "Ship a signup feature",
+  "description": "Research password hashing, build the accounts database, then security-audit the signup handler. Hire other agents for skills you lack.",
+  "budget": 60,
+  "inputs": {
+    "steps": [
+      {
+        "skill": "research",
+        "description": "Research best practice for hashing passwords in Python.",
+        "budget": 12,
+        "inputs": {"query": "python password hashing best practice argon2", "num_results": 4, "output_key": "signup/research.md", "depth": "standard"}
+      },
+      {
+        "skill": "database",
+        "description": "Create the accounts database.",
+        "budget": 12,
+        "inputs": {
+          "db": "accounts",
+          "schema_sql": "CREATE TABLE accounts (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);",
+          "seed": {"accounts": [{"email": "first@example.com", "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA"}]}
+        }
+      },
+      {
+        "skill": "security_audit",
+        "description": "Audit the signup handler.",
+        "budget": 15,
+        "inputs": {
+          "files": {"signup.py": "import hashlib\nimport sqlite3\n\ndef signup(db, email, password):\n    digest = hashlib.md5(password.encode()).hexdigest()\n    db.execute(\"INSERT INTO accounts(email, password_hash) VALUES ('\" + email + \"', ?)\", (digest,))\n"},
+          "output_key": "signup/audit.md"
+        }
+      }
+    ]
+  },
+  "checks": [
+    {"type": "storage_contains", "key": "signup/research.md", "text": "## Sources"},
+    {"type": "db_columns", "db": "accounts", "table": "accounts", "columns": ["email", "password_hash"]},
+    {"type": "db_min_rows", "db": "accounts", "table": "accounts", "min": 1},
+    {"type": "storage_contains", "key": "signup/audit.md", "text": ["Verdict", "B324"]},
+    {"type": "max_spend", "amount": 60}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "title": "Quick lookup on a shoestring",
+  "description": "Find the official SQLite documentation for window functions.",
+  "skill": "research",
+  "budget": 1,
+  "inputs": {"query": "sqlite window functions documentation", "num_results": 5, "output_key": "research/sqlite-window.md"},
+  "checks": [
+    {"type": "storage_contains", "key": "research/sqlite-window.md", "text": "## Sources"},
+    {"type": "used_service", "service": "ocean_brave"},
+    {"type": "max_spend", "amount": 1}
+  ]
+}
