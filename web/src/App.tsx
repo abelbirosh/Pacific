@@ -34,6 +34,33 @@ function useReveal() {
   }, [])
 }
 
+/**
+ * Draw the diagrams' wires when they are really on screen, on every load. Unlike the tile reveal there is
+ * no early fallback, so the drawing is never spent before anyone sees it.
+ */
+function useDrawDiagrams() {
+  useEffect(() => {
+    const diagrams = document.querySelectorAll<SVGSVGElement>('.diagram')
+    if (!('IntersectionObserver' in window)) {
+      diagrams.forEach((d) => d.classList.add('is-drawn'))
+      return
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            e.target.classList.add('is-drawn')
+            io.unobserve(e.target)
+          }
+        }
+      },
+      { threshold: 0.35 },
+    )
+    diagrams.forEach((d) => io.observe(d))
+    return () => io.disconnect()
+  }, [])
+}
+
 /** A silent loop is decoration: under reduced motion, stop it on its poster frame. */
 function usePauseLoopsForReducedMotion() {
   useEffect(() => {
@@ -171,6 +198,7 @@ function Footer() {
 
 export default function App() {
   useReveal()
+  useDrawDiagrams()
   usePauseLoopsForReducedMotion()
   return (
     <>

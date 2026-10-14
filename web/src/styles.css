@@ -127,9 +127,9 @@ footer.board { padding-top: 0; }
 .dg-wire { fill: none; stroke-width: 1.6; stroke-linecap: round; }
 .dg-before .dg-wire { stroke: var(--coral); opacity: 0.75; }
 .dg-head { fill: var(--coral); }
-/* the web written for people turns agents away: the chip goes dark and its wire is crossed out */
-.dg-before .dg-shut { fill: #121816; }
-.dg-shut-note { fill: var(--coral) !important; }
+/* the part of the web that turns agents away: a dark chip in coral type, its wire stopped by an X */
+.dg-before .dg-shut .dg-loose { fill: #121816; }
+.dg-before .dg-shut text { fill: var(--coral); }
 .dg-block circle { fill: var(--black); stroke: var(--coral); stroke-width: 2; }
 .dg-block path { fill: none; stroke: var(--paper); stroke-width: 2.5; stroke-linecap: round; }
 .dg-after .dg-wire { stroke: var(--paper); stroke-width: 2.5; }
@@ -185,14 +185,14 @@ footer.board { padding-top: 0; }
   .js .shutter[data-reveal] img { transform: scale(1.12); transition: transform 1800ms var(--ease-soft); }
   .js .shutter[data-reveal].is-in img { transform: none; }
 
-  .js [data-reveal] .dg-wire { stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 900ms var(--ease-out); }
+  .js .diagram .dg-wire { stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 900ms var(--ease-out); }
   .js .dg-before .dg-wire { transition-delay: calc(400ms + mod(var(--i, 0) * 37ms, 700ms)); }
-  .js [data-reveal] .dg-head, .js [data-reveal] .dg-block { opacity: 0; transition: opacity 250ms ease; }
+  .js .diagram .dg-head, .js .diagram .dg-block { opacity: 0; transition: opacity 250ms ease; }
   .js .dg-before .dg-head { transition-delay: calc(1100ms + mod(var(--i, 0) * 37ms, 700ms)); }
   .js .dg-before .dg-block { transition-delay: 1900ms; }
-  .js [data-reveal].is-in .dg-head, .js [data-reveal].is-in .dg-block { opacity: 1; }
+  .js .diagram.is-drawn .dg-head, .js .diagram.is-drawn .dg-block { opacity: 1; }
   .js .dg-after .dg-wire { transition-delay: calc(500ms + var(--i, 0) * 90ms); }
-  .js [data-reveal].is-in .dg-wire { stroke-dashoffset: 0; }
+  .js .diagram.is-drawn .dg-wire { stroke-dashoffset: 0; }
 }
 @keyframes line-up { to { transform: none; } }
 

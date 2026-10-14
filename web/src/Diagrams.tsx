@@ -108,22 +108,23 @@ const HUB_R = 56
 const CUSTOM_BAR = { x: 156, y: 508, w: 250, h: 44 }
 
 /* the providers, loose on the table: no grouping, each at its own angle */
-const WEB_MEDIA = 'Traditional web media'
-const LOOSE: { s: string; x: number; y: number; w: number; deg: number; h?: number }[] = [
-  { s: 'OSS', x: 452, y: 8, w: 72, deg: -7 },
-  { s: 'Data storage', x: 538, y: 46, w: 102, deg: 6 },
-  { s: 'Search API', x: 412, y: 112, w: 98, deg: 4 },
-  { s: 'Voice-to-speech API', x: 470, y: 190, w: 162, deg: -5 },
-  { s: WEB_MEDIA, x: 404, y: 282, w: 172, deg: 7, h: 52 },
-  { s: 'Payment APIs', x: 524, y: 366, w: 112, deg: -9 },
-  { s: 'Data APIs', x: 430, y: 452, w: 98, deg: 3 },
+const OPEN_MEDIA = 'Accessible web media'
+const SHUT_MEDIA = 'Web media blocked to agents'
+const LOOSE: { s: string; x: number; y: number; w: number; deg: number }[] = [
+  { s: 'OSS', x: 452, y: 4, w: 72, deg: -7 },
+  { s: 'Data storage', x: 538, y: 40, w: 102, deg: 6 },
+  { s: 'Search API', x: 412, y: 100, w: 98, deg: 4 },
+  { s: 'Voice-to-speech API', x: 470, y: 166, w: 162, deg: -5 },
+  { s: OPEN_MEDIA, x: 410, y: 236, w: 168, deg: 6 },
+  { s: SHUT_MEDIA, x: 440, y: 304, w: 196, deg: -4 },
+  { s: 'Payment APIs', x: 520, y: 374, w: 112, deg: -9 },
+  { s: 'Data APIs', x: 430, y: 448, w: 98, deg: 3 },
 ]
 const looseAt = (name: string) => LOOSE.find((l) => l.s === name)!
 /** Where a wire meets a loose chip: the middle of its left edge, turned with the chip. */
 const looseEnd = (name: string): Pt => {
   const l = looseAt(name)
-  const h = l.h ?? CHIP
-  return turn([l.x + l.w / 2, l.y + h / 2], l.deg, [l.x, l.y + h / 2])
+  return turn([l.x + l.w / 2, l.y + CHIP / 2], l.deg, [l.x, l.y + CHIP / 2])
 }
 
 type Wire = { from: Pt; to: Pt; blocked?: boolean }
@@ -143,9 +144,9 @@ export function BeforeDiagram() {
   wires.push({ from: agentChip(2, 0), to: looseEnd('Payment APIs') })
   // GEO-optimized search feeds web search
   wires.push({ from: edge(GEO, HUB_R, WEB), to: edge(WEB, HUB_R, GEO) })
-  // web search fans out to everything on the table, except the web written for people, which turns agents away
-  for (const l of LOOSE) fromHub(WEB, looseEnd(l.s), l.s === WEB_MEDIA)
-  fromHub(GEO, looseEnd(WEB_MEDIA))
+  // web search fans out to everything on the table; the part of the web that turns agents away stops it at the door
+  for (const l of LOOSE) fromHub(WEB, looseEnd(l.s), l.s === SHUT_MEDIA)
+  fromHub(GEO, looseEnd(OPEN_MEDIA))
   fromHub(GEO, looseEnd('Search API'))
   fromHub(PAY, looseEnd('Payment APIs'))
   fromHub(PAY, looseEnd('Data APIs'))
@@ -154,22 +155,24 @@ export function BeforeDiagram() {
     const from: Pt = [CUSTOM_BAR.x + dx, CUSTOM_BAR.y]
     wires.push({ from, to: edge(hub, HUB_R, from) })
   }
+  // the crossed-out wire ends at an X just in front of the blocked chip
   const blocked = wires.find((w) => w.blocked)!
-  const cross: Pt = [blocked.from[0] + (blocked.to[0] - blocked.from[0]) * 0.62, blocked.from[1] + (blocked.to[1] - blocked.from[1]) * 0.62]
+  const back = 22 / Math.hypot(blocked.to[0] - blocked.from[0], blocked.to[1] - blocked.from[1])
+  const cross: Pt = [blocked.to[0] - (blocked.to[0] - blocked.from[0]) * back, blocked.to[1] - (blocked.to[1] - blocked.from[1]) * back]
 
   return (
     <svg className="diagram dg-before" viewBox={`0 0 ${W} ${H}`} role="img"
-      aria-label="Before Pacific: personal, general, financial and custom agents each wire themselves to web search, GEO-optimized search, payment and trading software and straight to individual services, which lie scattered with no common interface. Traditional web media is blocked to agents.">
+      aria-label="Before Pacific: personal, general, financial and custom agents each wire themselves to web search, GEO-optimized search, payment and trading software and straight to individual services, which lie scattered with no common interface. Some web media is accessible to agents; the rest is blocked to them.">
       {wires.map((w, n) => (
         <g key={n} style={wire(n)}>
-          <path className="dg-wire" d={arrowLine(w.from, w.to)} pathLength={1} />
-          <polygon className="dg-head" points={arrowHead(w.from, w.to)} />
+          {w.blocked
+            ? <path className="dg-wire" d={`M${w.from[0]},${w.from[1]} L${cross[0]},${cross[1]}`} pathLength={1} />
+            : <>
+                <path className="dg-wire" d={arrowLine(w.from, w.to)} pathLength={1} />
+                <polygon className="dg-head" points={arrowHead(w.from, w.to)} />
+              </>}
         </g>
       ))}
-      <g className="dg-block" transform={`translate(${cross[0]} ${cross[1]})`}>
-        <circle r={11} />
-        <path d="M-5,-5 L5,5 M5,-5 L-5,5" />
-      </g>
       <Agents customInColumn={false} />
       <g>
         <rect className="dg-panel" x={CUSTOM_BAR.x} y={CUSTOM_BAR.y} width={CUSTOM_BAR.w} height={CUSTOM_BAR.h} />
@@ -182,14 +185,15 @@ export function BeforeDiagram() {
         </g>
       ))}
       {LOOSE.map((l) => (
-        <g key={l.s} transform={`rotate(${l.deg} ${l.x + l.w / 2} ${l.y + (l.h ?? CHIP) / 2})`}>
-          <rect className={l.s === WEB_MEDIA ? 'dg-chip dg-loose dg-shut' : 'dg-chip dg-loose'} x={l.x} y={l.y} width={l.w} height={l.h ?? CHIP} />
+        <g key={l.s} className={l.s === SHUT_MEDIA ? 'dg-shut' : undefined} transform={`rotate(${l.deg} ${l.x + l.w / 2} ${l.y + CHIP / 2})`}>
+          <rect className="dg-chip dg-loose" x={l.x} y={l.y} width={l.w} height={CHIP} />
           <Label x={l.x + l.w / 2} y={l.y + 23} anchor="middle">{l.s}</Label>
-          {l.s === WEB_MEDIA && (
-            <text className="dg-shut-note" x={l.x + l.w / 2} y={l.y + 41} textAnchor="middle" fontSize={12} fontWeight={600}>Blocked to agents</text>
-          )}
         </g>
       ))}
+      <g className="dg-block" transform={`translate(${cross[0]} ${cross[1]})`}>
+        <circle r={11} />
+        <path d="M-5,-5 L5,5 M5,-5 L-5,5" />
+      </g>
     </svg>
   )
 }
