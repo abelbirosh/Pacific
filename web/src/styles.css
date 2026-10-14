@@ -38,6 +38,8 @@
 
 /* ---------- reset ---------- */
 *, *::before, *::after { box-sizing: border-box; }
+/* the page stops hard at its top and bottom edges: no elastic pull past them */
+html, body { overscroll-behavior: none; }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 body {
   margin: 0; background: var(--trench); color: var(--ink); font-family: var(--font);
@@ -98,7 +100,7 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .header { display: flex; align-items: center; gap: clamp(1rem, 3vw, 2.5rem); padding: 1.25rem 0; }
 .wordmark { font-size: 1.375rem; font-weight: 600; letter-spacing: -0.04em; text-decoration: none; }
 .nav { display: flex; gap: 1.75rem; font-size: var(--step-small); font-weight: 500; }
-.header .button { margin-left: auto; }
+.header .nav { margin-left: auto; }
 
 .hero-copy { margin-top: auto; padding-top: clamp(6rem, 18svh, 12rem); }
 .title { font-size: var(--step-display); line-height: 0.92; }
@@ -205,7 +207,6 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 @media (max-width: 640px) {
   :root { --step-display: 13.5vw; --swell: 48px; }
   .nav { display: none; }
-  .header .button { min-height: 2.5rem; padding: 0 1.1rem; font-size: var(--step-small); }
   .what-grid { min-height: 0; padding-bottom: 2rem; }
   .stop-dot { width: 2.2rem; height: 2.2rem; }
   .stop-label { font-size: 1rem; }

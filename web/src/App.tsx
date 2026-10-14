@@ -69,7 +69,6 @@ function Header() {
         <a className="link" href="#role">The role</a>
         <a className="link" href="#before-after">Before and after</a>
       </nav>
-      <a className="button" href="#demo">See the demo</a>
     </header>
   )
 }
