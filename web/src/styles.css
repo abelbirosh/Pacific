@@ -69,13 +69,17 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 /* ---------- the first screen: the swell itself, under white type ---------- */
 .hero {
   position: relative; overflow: hidden; display: flex; flex-direction: column; min-height: 100svh;
-  padding: 0 var(--margin) clamp(3rem, 7vw, 6rem); background: var(--sea);
+  /* the bottom padding matches the header so the title sits on the true centre of the screen */
+  padding: 0 var(--margin) 4.5rem; background: var(--sea);
 }
 .hero-video { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; }
-/* a neutral scrim, only where the type sits: the bar at the top and the title at the foot */
+/* a neutral scrim under the type: the bar at the top, a light veil behind the centred title,
+   and at the foot the water sinks into the board's own colour so the first edge below is as fine as the rest */
 .hero::before {
   content: ''; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(180deg, rgb(0 0 0 / 0.38), rgb(0 0 0 / 0) 26%, rgb(0 0 0 / 0) 46%, rgb(0 0 0 / 0.5));
+  background:
+    linear-gradient(0deg, var(--sea), rgb(10 34 29 / 0.85) 7%, rgb(10 34 29 / 0) 30%),
+    linear-gradient(180deg, rgb(0 0 0 / 0.38), rgb(0 0 0 / 0.18) 22%, rgb(0 0 0 / 0.18) 70%, rgb(0 0 0 / 0));
 }
 .hero > .header, .hero-copy { position: relative; z-index: 1; }
 
@@ -84,7 +88,7 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .nav { display: flex; gap: 1.75rem; font-size: var(--step-small); font-weight: 500; }
 .header .nav { margin-left: auto; }
 
-.hero-copy { margin-top: auto; padding-top: clamp(6rem, 18svh, 12rem); }
+.hero-copy { margin: auto 0; text-align: center; }
 .title { font-size: var(--step-display); line-height: 0.92; }
 .lines .line { display: block; overflow: hidden; padding: 0.1em 0; margin: -0.1em 0; }
 .lines [data-line] { display: block; }
