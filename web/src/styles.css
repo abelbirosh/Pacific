@@ -1,0 +1,225 @@
+/* Pacific: a dive from the surface to the trench. Each chapter is one depth of water; swells carry
+   the eye from one to the next. Ocean blues lead; red, black and white are the accents. */
+
+:root {
+  --surface: #ffffff;
+  --foam: #e8efff;
+  --ocean: #2436ff;
+  --deep: #1328b8;
+  --navy: #050a5c;
+  --trench: #07070d;
+  --abyss: #0d1270;
+  --ink: #0a0a0a;
+  --paper: #ffffff;
+  --coral: #ff3b1f;
+  --muted: #4a4a4a;
+
+  --font: 'Switzer', ui-sans-serif, system-ui, sans-serif;
+
+  --step-small: clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem);
+  --step-body: clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem);
+  --step-head: clamp(2.25rem, 1.3rem + 3.6vw, 4.5rem);
+  --step-display: clamp(2.75rem, 5.8vw, 6.25rem);
+  --step-mark: clamp(4.5rem, 17vw, 16rem);
+
+  --margin: clamp(1rem, 3vw, 2.5rem);
+  --swell: clamp(56px, 8vw, 128px);
+  --soft: 28px;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.76, 0, 0.24, 1);
+  --ease-soft: cubic-bezier(0.33, 1, 0.68, 1);
+  --t-press: 140ms;
+  --t-hover: 200ms;
+}
+
+/* ---------- reset ---------- */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--trench); color: var(--ink); font-family: var(--font);
+  font-size: var(--step-body); line-height: 1.5; letter-spacing: -0.005em;
+  -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; overflow-x: hidden;
+}
+h1, h2, p, figure, ul, ol { margin: 0; }
+ul, ol { padding: 0; list-style: none; }
+img, video, svg { display: block; max-width: 100%; }
+a { color: inherit; }
+:target { scroll-margin-top: 2rem; }
+::selection { background: var(--ocean); color: var(--paper); }
+:focus-visible { outline: 3px solid var(--coral); outline-offset: 4px; border-radius: 4px; }
+h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap: balance; }
+.head { font-size: var(--step-head); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* ---------- controls: fully round, one shape for the page ---------- */
+.button {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 3rem; padding: 0 1.5rem;
+  border-radius: 999px; background: var(--ocean); color: var(--paper); font-weight: 500;
+  text-decoration: none; white-space: nowrap;
+  transition: transform var(--t-press) var(--ease-out), background-color var(--t-hover) ease, color var(--t-hover) ease;
+}
+.button:active { transform: scale(0.96); }
+.button-light { background: var(--paper); color: var(--ink); }
+.link {
+  text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 0.25em;
+  text-decoration-thickness: 0.08em; transition: text-decoration-color var(--t-hover) ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .button:hover { background: var(--coral); color: var(--ink); }
+  .link:hover { text-decoration-color: currentColor; }
+}
+
+/* ---------- chapters and the swells between them ---------- */
+.chapter { position: relative; overflow: hidden; padding: 0 var(--margin) calc(var(--swell) + clamp(3rem, 7vw, 6rem)); }
+.swell { position: absolute; left: 0; right: 0; bottom: -1px; height: var(--swell); pointer-events: none; }
+.swell svg { position: absolute; bottom: 0; left: 0; width: 200%; max-width: none; height: 100%; }
+.swell path { fill: var(--into); }
+.swell-back { opacity: 0.45; }
+
+/* ---------- surface: header and hero ---------- */
+.hero { background: var(--surface); }
+.header { display: flex; align-items: center; gap: clamp(1rem, 3vw, 2.5rem); padding: 1.25rem 0; }
+.wordmark { font-size: 1.375rem; font-weight: 600; letter-spacing: -0.04em; text-decoration: none; }
+.nav { display: flex; gap: 1.75rem; font-size: var(--step-small); font-weight: 500; }
+.header .button { margin-left: auto; }
+
+.hero-grid {
+  display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr); align-items: center;
+  gap: var(--margin); min-height: calc(92svh - 5.5rem);
+}
+.title { font-size: var(--step-display); }
+.lines .line { display: block; overflow: hidden; padding-bottom: 0.1em; margin-bottom: -0.1em; }
+.lines [data-line] { display: block; }
+
+/* pictures sit in soft, water-worn shapes rather than boxes */
+.pebble { overflow: hidden; background: var(--foam); }
+.pebble img, .pebble video { width: 100%; height: 100%; object-fit: cover; }
+.current { position: relative; height: min(72svh, 46rem); }
+.current .pebble { position: absolute; }
+.p-wave { top: 6%; right: 4%; width: 64%; aspect-ratio: 1.3; border-radius: 46% 54% 44% 56% / 54% 46% 56% 46%; }
+.p-wave img { object-position: 35% 45%; }
+.p-clouds { top: 50%; left: 6%; width: 34%; aspect-ratio: 1; border-radius: 50%; }
+.p-loop { bottom: 2%; right: 8%; width: 40%; aspect-ratio: 1.7; border-radius: 999px; }
+.p-chart { top: 0; left: 14%; width: 22%; aspect-ratio: 0.82; border-radius: 48% 52% 50% 50% / 40% 40% 60% 60%; }
+.p-chart img { object-position: 50% 40%; }
+
+/* ---------- foam: what Pacific is ---------- */
+.what { background: var(--foam); padding-top: clamp(3rem, 6vw, 5rem); }
+.what-grid {
+  display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--margin);
+  min-height: 72svh; align-items: center;
+}
+.what .head { grid-column: 1 / 6; align-self: start; padding-top: 2rem; }
+.p-log { grid-column: 6 / 13; aspect-ratio: 1.6; border-radius: 120px 24px 120px 24px / 120px 24px 120px 24px; }
+
+/* ---------- ocean: the role it plays ---------- */
+.role { background: var(--ocean); color: var(--paper); padding-top: clamp(3rem, 6vw, 5rem); min-height: 88svh; }
+.stream { position: relative; height: clamp(16rem, 34vw, 26rem); margin-top: clamp(2rem, 6vw, 5rem); }
+.stream-line { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.stream-line path {
+  fill: none; stroke: var(--paper); stroke-width: 3; stroke-linecap: round; opacity: 0.55;
+  stroke-dasharray: 2 14; vector-effect: non-scaling-stroke;
+}
+.stops { position: absolute; inset: 0; }
+.stop { position: absolute; display: grid; justify-items: center; gap: 0.9rem; translate: -50% -1.6rem; }
+.stop:nth-child(1) { left: 12.5%; top: 62.5%; }
+.stop:nth-child(2) { left: 37.5%; top: 29.2%; }
+.stop:nth-child(3) { left: 62.5%; top: 70.8%; }
+.stop:nth-child(4) { left: 87.5%; top: 29.2%; }
+.stop-dot { width: 3.2rem; height: 3.2rem; border-radius: 50%; background: var(--paper); }
+.stop:nth-child(4) .stop-dot { background: var(--coral); }
+.stop-label { font-size: clamp(1.25rem, 1rem + 1vw, 1.75rem); font-weight: 600; letter-spacing: -0.03em; }
+
+/* ---------- deep: before and after, divided by the tide ---------- */
+.before-after { background: var(--deep); color: var(--paper); display: grid; grid-template-columns: 1fr 1fr; min-height: 92svh; padding-top: 0; }
+.tide { position: absolute; inset: 0; width: 100%; height: 100%; }
+.tide path { fill: var(--trench); }
+.tide-narrow { display: none; }
+.ba-half { position: relative; display: flex; align-items: center; padding: clamp(3rem, 7vw, 6rem) 0; }
+.ba-after { justify-content: flex-end; }
+.ba-word { font-size: var(--step-mark); font-weight: 600; letter-spacing: -0.05em; line-height: 0.9; }
+.ba-before .ba-word { color: var(--coral); }
+
+/* ---------- navy: the demo ---------- */
+.demo { background: var(--navy); color: var(--paper); padding-top: clamp(3rem, 6vw, 5rem); }
+.stage {
+  display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: var(--margin);
+  align-items: center; margin-top: clamp(2rem, 5vw, 4rem); min-height: 60svh;
+}
+.p-trieste { aspect-ratio: 1; border-radius: 50%; }
+.stage-slot { height: 100%; min-height: 24rem; border-radius: 48px; background: var(--abyss); }
+
+/* ---------- trench: the close ---------- */
+.trench { background: var(--trench); color: var(--paper); padding-top: clamp(3rem, 7vw, 6rem); padding-bottom: 2rem; }
+.trench-grid { position: relative; display: grid; align-items: center; min-height: 52svh; }
+.trench-mark { position: relative; z-index: 1; font-size: var(--step-mark); font-weight: 600; letter-spacing: -0.06em; line-height: 0.85; }
+.p-map { position: absolute; right: 0; top: 50%; margin-top: calc(min(38vw, 30rem) / -2); width: min(38vw, 30rem); aspect-ratio: 1; border-radius: 50%; }
+.p-map img { filter: grayscale(1) contrast(1.1) brightness(0.8); }
+.trench-foot { display: flex; justify-content: space-between; align-items: flex-end; gap: 2rem; margin-top: clamp(3rem, 6vw, 5rem); }
+.credits { display: grid; gap: 0.35rem; font-size: 1rem; line-height: 1.45; max-width: 60rem; }
+
+/* ---------- motion: masked title, entrances, drifting swells, buoyant pictures ---------- */
+@media (prefers-reduced-motion: no-preference) {
+  .js .lines [data-line] { transform: translateY(105%); animation: line-up 1000ms var(--ease-out) forwards; animation-delay: calc(var(--i, 0) * 120ms + 200ms); }
+  .js [data-rise] { opacity: 0; animation: rise 1200ms var(--ease-out) forwards; animation-delay: calc(var(--i, 0) * 120ms + 300ms); }
+  .js [data-reveal] { opacity: 0; transform: translateY(28px); transition: opacity 900ms var(--ease-out), transform 1100ms var(--ease-out); transition-delay: calc(var(--i, 0) * 110ms); }
+  .js [data-reveal].is-in { opacity: 1; transform: none; }
+  .js .shutter[data-reveal] { transform: none; }
+  .js .shutter[data-reveal] img { transform: scale(1.12); transition: transform 1800ms var(--ease-soft); }
+  .js .shutter[data-reveal].is-in img { transform: none; }
+
+  .swell-front { animation: drift 26s linear infinite; }
+  .swell-back { animation: drift 38s linear infinite reverse; }
+  .stream-line path { animation: flow 2.4s linear infinite; }
+  /* pictures rise in, then ride the swell: each bobs on its own period so they never move in step */
+  .js .current .pebble {
+    opacity: 0;
+    animation: rise 1200ms var(--ease-out) forwards, bob var(--bob, 9s) ease-in-out infinite alternate;
+    animation-delay: calc(var(--i, 0) * 120ms + 300ms), 0s;
+  }
+  .p-clouds { --bob: 11s; }
+  .p-loop { --bob: 8s; }
+  .p-chart { --bob: 13s; }
+  .p-trieste, .p-map { animation: bob 10s ease-in-out infinite alternate; }
+}
+@keyframes line-up { to { transform: none; } }
+@keyframes rise { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+@keyframes drift { to { transform: translateX(-50%); } }
+@keyframes flow { to { stroke-dashoffset: -32; } }
+@keyframes bob { from { translate: 0 0; } to { translate: 0 -10px; } }
+
+/* ---------- tablet ---------- */
+@media (max-width: 900px) {
+  .hero-grid { grid-template-columns: 1fr; min-height: 0; padding-top: 2rem; }
+  .current { height: 70vw; }
+  .what .head { grid-column: 1 / 13; }
+  .p-log { grid-column: 1 / 13; border-radius: 80px 20px 80px 20px; }
+  .stage { grid-template-columns: 1fr; }
+  .p-trieste { width: 60%; justify-self: center; }
+}
+
+/* ---------- phone ---------- */
+@media (max-width: 640px) {
+  :root { --step-display: 11.5vw; --swell: 48px; }
+  .nav { display: none; }
+  .header .button { min-height: 2.5rem; padding: 0 1.1rem; font-size: var(--step-small); }
+  .current { height: 92vw; }
+  .p-wave { width: 78%; right: 0; }
+  .p-clouds { width: 40%; left: 0; top: 54%; }
+  .p-loop { width: 52%; right: 0; }
+  .p-chart { width: 28%; left: 2%; }
+  .what-grid { min-height: 0; padding-bottom: 2rem; }
+  .stop-dot { width: 2.2rem; height: 2.2rem; }
+  .stop-label { font-size: 1rem; }
+  .before-after { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; min-height: 110svh; }
+  .tide-wide { display: none; }
+  .tide-narrow { display: block; }
+  .ba-half { align-items: center; justify-content: flex-start; padding: 2rem 0; }
+  .ba-after { justify-content: flex-end; }
+  .ba-word { font-size: 22vw; }
+  .stage-slot { min-height: 18rem; border-radius: 32px; }
+  .trench-grid { min-height: 0; gap: 2rem; }
+  .p-map { position: relative; top: auto; right: auto; margin: 0 0 0 auto; width: 62vw; }
+  .trench-foot { flex-direction: column; align-items: flex-start; }
+}
