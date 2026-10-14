@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect } from 'react'
 import type { CSSProperties } from 'react'
 import { CREDITS, STAGES } from './data'
 
@@ -73,56 +73,33 @@ function Header() {
   )
 }
 
-/** Size the one-line title so it runs the full width of the page, edge margin to edge margin. */
-function useFullWidthTitle() {
-  const ref = useRef<HTMLSpanElement>(null)
-  useLayoutEffect(() => {
-    const el = ref.current
-    const box = el?.parentElement
-    if (!el || !box) return
-    const fit = () => {
-      if (window.innerWidth < 720) {
-        el.style.fontSize = ''
-        return
-      }
-      el.style.fontSize = '100px'
-      el.style.fontSize = `${Math.floor((100 * box.clientWidth) / el.scrollWidth * 100) / 100}px`
-    }
-    fit()
-    const ro = new ResizeObserver(fit)
-    ro.observe(box)
-    document.fonts?.ready.then(fit)
-    return () => ro.disconnect()
-  }, [])
-  return ref
-}
-
-/** Big screens get the 4K master; phones and small windows get the 720p cut of the same clip. */
-function OceanVideo({ name, label }: { name: string; label: string }) {
-  const [big] = useState(() => window.matchMedia('(min-width: 1024px)').matches || window.screen.width * window.devicePixelRatio >= 2400)
-  return (
-    <video className="band-video" autoPlay muted loop playsInline preload="auto" poster={`${A}${name}-poster.jpg`} aria-label={label}>
-      <source src={`${A}${name}${big ? '-4k' : ''}.mp4`} type="video/mp4" />
-    </video>
-  )
-}
-
 function Hero() {
-  const title = useFullWidthTitle()
   return (
-    <section className="hero" id="top">
-      <div className="band band-dark">
-        <OceanVideo name="ocean-dark" label="Dark blue ocean swell rising and falling" />
-        <Header />
-      </div>
-      <div className="title-band">
-        <h1 className="title-run">
-          <span ref={title} className="title-line">Pacific x Alpha <br className="phone-break" />Speedrun demo</span>
+    <section className="chapter hero" id="top">
+      <video className="hero-video" autoPlay muted loop playsInline preload="auto"
+        poster={A + 'pacific-swell-poster.jpg'} aria-hidden="true">
+        <source src={A + 'pacific-swell-720.mp4'} type="video/mp4" media="(max-width: 600px)" />
+        <source src={A + 'pacific-swell-1080.mp4'} type="video/mp4" />
+      </video>
+      <Header />
+      <div className="hero-copy">
+        <h1 className="title lines">
+          <span className="line">
+            <span data-line style={i(0)}>
+              Pacific x{' '}
+              <span className="alpha">
+                <span className="alpha-word">alpha</span>{' '}
+                <span className="alpha-run">speedrun</span>
+              </span>{' '}
+              demo
+            </span>
+          </span>
         </h1>
+        <p className="lede lines">
+          <span className="line"><span data-line style={i(1)}>The infrastructure for agent-to-agent services</span></span>
+        </p>
       </div>
-      <div className="band band-surf">
-        <OceanVideo name="ocean-surf" label="Aerial view of white surf rolling in over dark water" />
-      </div>
+      <Swell into="--foam" />
     </section>
   )
 }

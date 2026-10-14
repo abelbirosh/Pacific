@@ -15,11 +15,14 @@
   --muted: #4a4a4a;
 
   --font: 'Switzer', ui-sans-serif, system-ui, sans-serif;
+  /* the face of speedrun's own headlines, used only for the alpha speedrun lockup */
+  --font-alpha: 'Anton', 'Switzer', sans-serif;
 
   --step-small: clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem);
   --step-body: clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem);
   --step-head: clamp(2.25rem, 1.3rem + 3.6vw, 4.5rem);
-  --step-display: clamp(2.75rem, 5.8vw, 6.25rem);
+  --step-display: clamp(2.75rem, 7.2vw, 8.5rem);
+  --step-lede: clamp(1.25rem, 0.9rem + 1.3vw, 2.125rem);
   --step-mark: clamp(4.5rem, 17vw, 16rem);
 
   --margin: clamp(1rem, 3vw, 2.5rem);
@@ -79,28 +82,39 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .swell path { fill: var(--into); }
 .swell-back { opacity: 0.45; }
 
-/* ---------- surface: header and hero ---------- */
+/* ---------- surface: the swell itself, under white type ---------- */
+.hero {
+  /* the video fills the whole first screen; the swell into the next chapter starts just below the fold */
+  display: flex; flex-direction: column; min-height: calc(100svh + var(--swell));
+  background: var(--navy); color: var(--paper);
+}
+.hero-video { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; }
+/* a neutral scrim, only where the type sits: the bar at the top and the title at the foot */
+.hero::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(180deg, rgb(0 0 0 / 0.38), rgb(0 0 0 / 0) 26%, rgb(0 0 0 / 0) 46%, rgb(0 0 0 / 0.5));
+}
+.hero > .header, .hero-copy { position: relative; z-index: 1; }
+.hero > .swell { z-index: 1; }
+
 .header { display: flex; align-items: center; gap: clamp(1rem, 3vw, 2.5rem); padding: 1.25rem 0; }
 .wordmark { font-size: 1.375rem; font-weight: 600; letter-spacing: -0.04em; text-decoration: none; }
 .nav { display: flex; gap: 1.75rem; font-size: var(--step-small); font-weight: 500; }
 .header .nav { margin-left: auto; }
 
-/* video block, white band of type, video block: dark swell from the very top of the page, surf beneath */
-.hero { display: grid; grid-template-columns: minmax(0, 1fr); }
-.band { position: relative; overflow: hidden; background: var(--navy); }
-.band-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.band-dark { min-height: 40svh; padding: 0 var(--margin); color: var(--paper); }
-/* a neutral scrim keeps the menu readable on moving water */
-.band-dark::before {
-  content: ''; position: absolute; inset: 0 0 auto; height: 9rem; z-index: 0; pointer-events: none;
-  background: linear-gradient(to bottom, rgb(0 0 0 / 0.4), rgb(0 0 0 / 0));
+.hero-copy { margin-top: auto; padding-top: clamp(6rem, 18svh, 12rem); }
+.title { font-size: var(--step-display); line-height: 0.92; }
+.lines .line { display: block; overflow: hidden; padding: 0.1em 0; margin: -0.1em 0; }
+.lines [data-line] { display: block; }
+.lede { margin-top: clamp(1rem, 2.2vw, 2rem); font-size: var(--step-lede); font-weight: 500; letter-spacing: -0.025em; line-height: 1.2; }
+
+/* alpha speedrun, set the way their mark is: a heavy italic "alpha" with "speedrun" tucked under its tail */
+.alpha {
+  display: inline-grid; justify-items: end; font-family: var(--font-alpha); font-weight: 400;
+  letter-spacing: 0; transform: skewX(-12deg); transform-origin: 0 100%; margin: 0 0.14em 0 0.02em;
 }
-.band-dark > .header { position: relative; z-index: 1; }
-.band-surf { min-height: 40svh; }
-.title-band { background: var(--paper); color: var(--ink); padding: clamp(1.5rem, 3.5vw, 3rem) var(--margin); }
-.title-run { font-size: var(--step-display); line-height: 0.9; letter-spacing: -0.045em; }
-.title-line { display: inline-block; white-space: nowrap; }
-.phone-break { display: none; }
+.alpha-word { font-size: 1.14em; line-height: 0.82; letter-spacing: -0.01em; }
+.alpha-run { font-size: 0.27em; line-height: 1; letter-spacing: 0.02em; margin-top: 0.12em; margin-right: 0.04em; }
 
 /* pictures sit in soft, water-worn shapes rather than boxes */
 .pebble { overflow: hidden; background: var(--foam); }
@@ -163,6 +177,7 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 
 /* ---------- motion: masked title, entrances, drifting swells, buoyant pictures ---------- */
 @media (prefers-reduced-motion: no-preference) {
+  .js .lines [data-line] { transform: translateY(105%); animation: line-up 1000ms var(--ease-out) forwards; animation-delay: calc(var(--i, 0) * 120ms + 200ms); }
   .js [data-reveal] { opacity: 0; transform: translateY(28px); transition: opacity 900ms var(--ease-out), transform 1100ms var(--ease-out); transition-delay: calc(var(--i, 0) * 110ms); }
   .js [data-reveal].is-in { opacity: 1; transform: none; }
   .js .shutter[data-reveal] { transform: none; }
@@ -172,19 +187,17 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
   .swell-front { animation: drift 26s linear infinite; }
   .swell-back { animation: drift 38s linear infinite reverse; }
   .stream-line path { animation: flow 2.4s linear infinite; }
-  /* pictures rise in, then ride the swell: each bobs on its own period so they never move in step */
-  .js
   .p-trieste, .p-map { animation: bob 10s ease-in-out infinite alternate; }
 }
 @keyframes line-up { to { transform: none; } }
-@keyframes rise { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
 @keyframes drift { to { transform: translateX(-50%); } }
 @keyframes flow { to { stroke-dashoffset: -32; } }
 @keyframes bob { from { translate: 0 0; } to { translate: 0 -10px; } }
 
 /* ---------- tablet ---------- */
 @media (max-width: 900px) {
-    .what .head { grid-column: 1 / 13; }
+  :root { --step-display: 9.5vw; }
+  .what .head { grid-column: 1 / 13; }
   .p-log { grid-column: 1 / 13; border-radius: 80px 20px 80px 20px; }
   .stage { grid-template-columns: 1fr; }
   .p-trieste { width: 60%; justify-self: center; }
@@ -192,12 +205,8 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 
 /* ---------- phone ---------- */
 @media (max-width: 640px) {
-  :root { --step-display: 11.5vw; --swell: 48px; }
+  :root { --step-display: 13.5vw; --swell: 48px; }
   .nav { display: none; }
-  .band-dark, .band-surf { min-height: 34svh; }
-  .title-run { font-size: 12.5vw; }
-  .title-line { white-space: normal; }
-  .phone-break { display: inline; }
   .what-grid { min-height: 0; padding-bottom: 2rem; }
   .stop-dot { width: 2.2rem; height: 2.2rem; }
   .stop-label { font-size: 1rem; }
