@@ -38,6 +38,8 @@ uv run pacific ledger
 
 `pacific init` without `--seed` gives fresh random names, owners, skills and prices.
 
+For a full annotated run (genesis, a three-step task with delegation, the ledger, and a budget failure), see [docs/walkthrough.md](docs/walkthrough.md).
+
 ## Concepts
 
 **Wave dollars.** One global supply (`meta.total_supply`), minted only by the treasury at genesis or by an admin mint. Amounts are integer micro-WD. Every movement is a row in an append-only `transactions` table. The invariant *supply = sum of balances = sum of mints* is checked by `pacific audit`.
