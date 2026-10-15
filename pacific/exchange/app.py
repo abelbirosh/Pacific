@@ -14,6 +14,7 @@ land in the root job's workspace, so checks can find them.
 """
 
 
+import asyncio
 import json
 import math
 import os
@@ -24,7 +25,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
 
@@ -38,6 +39,7 @@ from ..ledger import Ledger, LedgerError
 from ..money import fmt, to_micro, to_wd
 from ..registry import Registry, register_agent_offering
 from .checks import CheckContext, run_checks
+from .events import TERMINAL, TaskEvents
 
 PROTOCOL_VERSION = "0.1"
 PLATFORM_TIMEOUT = 120
@@ -55,6 +57,8 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
     db = db or Database(config.ledger_path)
     signer = Signer.load(config.home)  # signs a grant for every request forwarded to a provider
     idem = idempotency.Store(db, stale_after_s=delegation_timeout + 60)
+    events = TaskEvents(db)
+    running: set[asyncio.Task] = set()  # tasks executing in the background (keeps them referenced)
     ledger, registry = Ledger(db), Registry(db)
     # No connection cap: a delegated call holds its connection while the hired agent makes calls
     # of its own, so a capped pool can fill with callers waiting on callees that can't connect.
@@ -108,6 +112,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                 "me": "/v1/me", "services": "/v1/services", "quote": "/v1/quote/{service}/{endpoint}",
                 "call": "/v1/call/{service}/{endpoint}", "jobs": "/v1/jobs/{job_id}", "transfer": "/v1/transfer",
                 "offer": "/v1/services", "tasks": "/v1/tasks", "run_task": "/v1/tasks/{task_id}/run",
+                "task_events": "/v1/tasks/{task_id}/events", "cancel_task": "/v1/tasks/{task_id}/cancel",
             },
             "apis": [{"type": "openapi", "url": "/openapi.json", "description": "The exchange's full HTTP API"}],
             "headers": {"job": "X-Pacific-Job", "max_cost": "X-Pacific-Max-Cost"},
@@ -291,6 +296,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
             )
 
         workspace = job["root_job_id"] if job else acct["id"]
+        task_id, depth = (_task_of(job["root_job_id"]), _job_depth(x_pacific_job)) if job else (None, 0)
         t0 = time.monotonic()
         cost, units, status, error, payload, http_status = 0, 0.0, "failed", None, None, 502
         child, provider_replayed = None, False
@@ -313,6 +319,9 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                 with db.tx() as conn:
                     child = ledger.open_job(conn, svc["provider_id"], to_micro(body["budget"]), parent_job_id=x_pacific_job)
                     conn.execute("UPDATE calls SET child_job_id = ? WHERE id = ?", (child, call_id))
+                if task_id:
+                    events.emit(task_id, "hire", call_id=call_id, service=service, seller=ledger.account(svc["provider_id"])["name"],
+                                buyer=acct["name"], budget=body["budget"], depth=depth + 1)
                 raw = json.dumps({"task": body, "job_id": child, "buyer_id": acct["id"],
                                   "skill": json.loads(svc["meta"]).get("skill")}).encode()
                 resp = await http.post(
@@ -348,6 +357,9 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                 "UPDATE calls SET status=?, cost=?, units=?, error=?, latency_ms=? WHERE id=?",
                 (status, charged, units, None if error is None else str(error)[:2000], latency, call_id),
             )
+        if task_id:
+            events.emit(task_id, "call", call_id=call_id, service=service, endpoint=endpoint, caller=acct["name"],
+                        status=status, cost=to_wd(charged), depth=depth)
         receipt = {
             "call_id": call_id, "service": service, "endpoint": endpoint, "status": status,
             "cost": money(charged), "units": units, "latency_ms": latency,
@@ -400,48 +412,162 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
             )
         return task_report(task_id)
 
-    @app.post("/v1/tasks/{task_id}/run")
-    async def run_task(task_id: str, who=Depends(admin_or_account)):
+    def _task_of(root_job_id: str) -> str | None:
+        row = db.one("SELECT id FROM tasks WHERE job_id = ?", (root_job_id,))
+        return row["id"] if row else None
+
+    def _job_depth(job_id: str) -> int:
+        depth, parent = 0, db.one("SELECT parent_job_id FROM jobs WHERE id = ?", (job_id,))["parent_job_id"]
+        while parent:
+            depth, parent = depth + 1, db.one("SELECT parent_job_id FROM jobs WHERE id = ?", (parent,))["parent_job_id"]
+        return depth
+
+    def _task_for(task_id: str, who, manage: bool = False):
+        """The task, if `who` may see it (admin, the agent's owner, or the agent itself) or, with
+        `manage`, run or cancel it (admin or the owner)."""
         task = db.one("SELECT * FROM tasks WHERE id = ?", (task_id,))
         if task is None:
             raise HTTPException(404, "no such task")
-        if who is not None and ledger.account(task["agent_id"])["owner_id"] != who["id"]:
-            raise HTTPException(403, "not your agent's task")
+        if who is not None:
+            owner = ledger.account(task["agent_id"])["owner_id"]
+            if who["id"] != owner and (manage or who["id"] != task["agent_id"]):
+                raise HTTPException(403, "not your agent's task")
+        return task
+
+    @app.post("/v1/tasks/{task_id}/run")
+    async def run_task(task_id: str, who=Depends(admin_or_account), wait: float = 0):
+        """Start the task and return 202 at once; follow it at /v1/tasks/{id}/events. With
+        `wait`, hold the request up to that many seconds and return the full report (200) if
+        it finished by then."""
+        task = _task_for(task_id, who, manage=True)
         if task["status"] != "pending":
             raise HTTPException(409, f"task is already {task['status']}")
         with db.tx() as conn:
             conn.execute("UPDATE tasks SET status='running' WHERE id=?", (task_id,))
+        events.emit(task_id, "state", status="running")
+        job = asyncio.create_task(_execute_task(task_id))
+        running.add(job)
+        job.add_done_callback(running.discard)
+        if wait > 0:
+            await asyncio.wait({job}, timeout=wait)  # a client that goes away doesn't stop the task
+            if job.done():
+                return task_report(task_id)
+        return JSONResponse({"id": task_id, "status": "running", "events": f"/v1/tasks/{task_id}/events"},
+                            status_code=202)
+
+    async def _execute_task(task_id: str):
+        task = db.one("SELECT * FROM tasks WHERE id = ?", (task_id,))
         spec = json.loads(task["spec"])
         try:
-            path = f"/agents/{task['agent_id']}/run"
-            raw = json.dumps({"task": spec, "job_id": task["job_id"]}).encode()
-            resp = await http.post(config.agents_url + path, content=raw, timeout=delegation_timeout,
-                                   headers=signer.headers(path, raw, ws=task["job_id"], call=task_id))
-            result = resp.json() if resp.is_success else {"status": "error", "output": resp.text}
-        except httpx.HTTPError as e:
-            result = {"status": "error", "output": f"agent host unreachable: {type(e).__name__}: {e}"}
-        with db.tx() as conn:
-            conn.execute("UPDATE jobs SET status='closed' WHERE id=?", (task["job_id"],))
+            try:
+                path = f"/agents/{task['agent_id']}/run"
+                raw = json.dumps({"task": spec, "job_id": task["job_id"]}).encode()
+                resp = await http.post(config.agents_url + path, content=raw, timeout=delegation_timeout,
+                                       headers=signer.headers(path, raw, ws=task["job_id"], call=task_id))
+                result = resp.json() if resp.is_success else {"status": "error", "output": resp.text}
+            except httpx.HTTPError as e:
+                result = {"status": "error", "output": f"agent host unreachable: {type(e).__name__}: {e}"}
+            with db.tx() as conn:
+                conn.execute("UPDATE jobs SET status='closed' WHERE id=?", (task["job_id"],))
+            output = result.get("output") or ""
+            events.emit(task_id, "output", status=result.get("status"), text=output[:2000], truncated=len(output) > 2000)
+            cancelled = db.one("SELECT status FROM tasks WHERE id = ?", (task_id,))["status"] == "cancelled"
+            checks = []
+            if not cancelled:
+                events.emit(task_id, "state", status="checking")
+                job = ledger.job_status(task["job_id"])
+                used = {r["service"] for r in db.all(
+                    "SELECT DISTINCT c.service FROM calls c JOIN jobs j ON j.id = c.job_id "
+                    "WHERE j.root_job_id = ? AND c.status = 'ok'", (job["root_job_id"],))}
+                ctx = CheckContext(config.services_url, signer, job["root_job_id"], output, job, used)
+                checks = await run_checks(ctx, spec.get("checks", []))
+                for c in checks:
+                    events.emit(task_id, "check", check=c["check"].get("type"), passed=c["passed"], detail=c["detail"])
+            if cancelled:
+                final = "cancelled"
+            elif result.get("status") == "error":
+                final = "error"
+            else:
+                final = "passed" if all(c["passed"] for c in checks) and result.get("status") == "completed" else "failed"
+            with db.tx() as conn:
+                conn.execute(
+                    "UPDATE tasks SET status=?, output=?, trace=?, checks=?, artifacts=?, "
+                    "finished_at=COALESCE(finished_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?",
+                    (final, result.get("output"), json.dumps(result.get("trace", [])), json.dumps(checks),
+                     json.dumps(result.get("artifacts") or {}), task_id),
+                )
+            if not cancelled:  # a cancel already announced the final state
+                events.emit(task_id, "state", status=final)
+        except Exception as e:  # never leave a task running because of a bug here
+            unhandled.append({"path": f"task {task_id}", "error": f"{type(e).__name__}: {e}"[:300]})
+            with db.tx() as conn:
+                conn.execute("UPDATE tasks SET status='error', output=?, finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                             "WHERE id=? AND status='running'", (f"exchange error: {type(e).__name__}: {e}", task_id))
+                conn.execute("UPDATE jobs SET status='closed' WHERE root_job_id=?", (task["job_id"],))
+            events.emit(task_id, "state", status="error")
 
-        job = ledger.job_status(task["job_id"])
-        used = {r["service"] for r in db.all(
-            "SELECT DISTINCT c.service FROM calls c JOIN jobs j ON j.id = c.job_id "
-            "WHERE j.root_job_id = ? AND c.status = 'ok'", (job["root_job_id"],))}
-        ctx = CheckContext(config.services_url, signer, job["root_job_id"],
-                           result.get("output", ""), job, used)
-        checks = await run_checks(ctx, spec.get("checks", []))
-        if result.get("status") == "error":
-            final = "error"
-        else:
-            final = "passed" if all(c["passed"] for c in checks) and result.get("status") == "completed" else "failed"
+    @app.post("/v1/tasks/{task_id}/cancel")
+    async def cancel_task(task_id: str, who=Depends(admin_or_account)):
+        """Stop a task: its whole job tree closes, so no further holds can be placed in it; calls
+        already in flight finish and settle. Cancelling a finished task changes nothing."""
+        task = _task_for(task_id, who, manage=True)
         with db.tx() as conn:
-            conn.execute(
-                "UPDATE tasks SET status=?, output=?, trace=?, checks=?, artifacts=?, "
-                "finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
-                (final, result.get("output"), json.dumps(result.get("trace", [])), json.dumps(checks),
-                 json.dumps(result.get("artifacts") or {}), task_id),
-            )
-        return task_report(task_id)
+            changed = conn.execute(
+                "UPDATE tasks SET status='cancelled', finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                "WHERE id=? AND status IN ('pending', 'running')", (task_id,)).rowcount
+            if changed:
+                conn.execute("UPDATE jobs SET status='closed' WHERE root_job_id=?", (task["job_id"],))
+        if changed:
+            events.emit(task_id, "state", status="cancelled")
+        return {"id": task_id, "status": db.one("SELECT status FROM tasks WHERE id = ?", (task_id,))["status"]}
+
+    @app.get("/v1/tasks/{task_id}/events")
+    async def task_events(task_id: str, request: Request, cursor: str | None = None, wait: float = 0,
+                          who=Depends(admin_or_account)):
+        _task_for(task_id, who)
+        if "text/event-stream" in request.headers.get("accept", ""):
+            start = request.headers.get("last-event-id") or cursor
+            events.read(task_id, start)  # reject a bad cursor before the stream starts
+            return StreamingResponse(_stream(task_id, start), media_type="text/event-stream")
+        found, next_cursor, more = events.read(task_id, cursor)
+        if not found and wait > 0 and _status(task_id) not in TERMINAL:
+            await events.wait(task_id, min(wait, 60))
+            found, next_cursor, more = events.read(task_id, cursor)
+        return {"task_id": task_id, "events": found, "cursor": next_cursor, "has_more": more, "status": _status(task_id)}
+
+    def _status(task_id: str) -> str:
+        return db.one("SELECT status FROM tasks WHERE id = ?", (task_id,))["status"]
+
+    async def _stream(task_id: str, cursor: str | None):
+        while True:
+            found, cursor, more = events.read(task_id, cursor)
+            for e in found:
+                yield f"id: {e['id']}\ndata: {json.dumps(e)}\n\n"
+            if more:
+                continue
+            if _status(task_id) in TERMINAL and not found:
+                return
+            if not found:
+                await events.wait(task_id, 15)
+                if not events.read(task_id, cursor)[0]:
+                    yield ": keep-alive\n\n"
+
+    def _recover():
+        """On startup nothing can be in flight, so anything still marked as running was cut off
+        by a restart: fail those tasks, close their jobs, and release their holds."""
+        with db.tx() as conn:
+            stuck = conn.execute("SELECT id, job_id FROM tasks WHERE status = 'running'").fetchall()
+            for t in stuck:
+                conn.execute("UPDATE tasks SET status='error', output='interrupted: the exchange restarted while it ran', "
+                             "finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?", (t["id"],))
+                conn.execute("UPDATE jobs SET status='closed' WHERE root_job_id=?", (t["job_id"],))
+            for h in conn.execute("SELECT id FROM holds WHERE status = 'active'").fetchall():
+                ledger.settle_hold(conn, h["id"], None, 0, "released at restart", None)
+            conn.execute("UPDATE calls SET status='failed', error='interrupted by an exchange restart' WHERE status='pending'")
+        for t in stuck:
+            events.emit(t["id"], "state", status="error", reason="interrupted by an exchange restart")
+
+    _recover()
 
     def task_report(task_id: str) -> dict:
         task = db.one("SELECT * FROM tasks WHERE id = ?", (task_id,))
@@ -476,7 +602,8 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         return d
 
     @app.get("/v1/tasks/{task_id}")
-    def get_task(task_id: str, _=Depends(admin_or_account)):
+    def get_task(task_id: str, who=Depends(admin_or_account)):
+        _task_for(task_id, who)
         return task_report(task_id)
 
     @app.get("/v1/tasks")

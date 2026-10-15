@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass, field
 
 import httpx
 
+from ..exchange.events import TERMINAL
 from .workload import Workload
 
 
@@ -33,6 +34,7 @@ class TrafficConfig:
     research: bool = True            # include research tasks (needs offline search or the internet)
     check_every_s: float = 2.0
     task_timeout_s: float = 600
+    cancel_rate: float = 0.0         # share of tasks an impatient owner cancels partway through
 
 
 @dataclass
@@ -52,6 +54,9 @@ class TaskRecord:
     depth: int = 0
     error: str | None = None
     duplicated: bool = False  # a row count came out higher than seeded: some work ran twice
+    cancel_after_s: float | None = None  # the owner cancels this long after starting it, if still running
+    cancelled: bool = False
+    first_event_s: float | None = None   # time from run to the first event that isn't a state change
     sim: dict = field(default_factory=dict)
 
 
@@ -80,13 +85,33 @@ async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, prog
             t0 = time.monotonic()
             auth = {"Authorization": f"Bearer {owner_key[spec['agent']]}"}
 
-            async def post(path: str, **kw) -> httpx.Response:
+            async def send(method: str, path: str, **kw) -> httpx.Response:
                 for _ in range(6):  # owners honour rate limits too
-                    r = await http.post(path, headers=auth, **kw)
+                    r = await http.request(method, path, headers=auth, **kw)
                     if r.status_code != 429:
                         return r
                     await asyncio.sleep(min(10.0, float(r.headers.get("Retry-After", 1))))
                 return r
+
+            post = lambda path, **kw: send("POST", path, **kw)
+
+            async def follow() -> dict:
+                """Long-poll the task's events until it finishes, cancelling it if this owner is impatient."""
+                cursor, status = None, "running"
+                cancel_at = t0 + rec.cancel_after_s if rec.cancel_after_s is not None else None
+                while status not in TERMINAL:
+                    if time.monotonic() - t0 > cfg.task_timeout_s:
+                        raise httpx.ReadTimeout(f"task still {status} after {cfg.task_timeout_s}s")
+                    if cancel_at is not None and time.monotonic() >= cancel_at:
+                        await post(f"/v1/tasks/{rec.id}/cancel")
+                        rec.cancelled, cancel_at = True, None
+                    wait = 10.0 if cancel_at is None else max(0.0, min(10.0, cancel_at - time.monotonic()))
+                    page = (await send("GET", f"/v1/tasks/{rec.id}/events",
+                                       params={"wait": wait, **({"cursor": cursor} if cursor else {})})).json()
+                    cursor, status = page["cursor"], page["status"]
+                    if rec.first_event_s is None and any(e["type"] != "state" for e in page["events"]):
+                        rec.first_event_s = time.monotonic() - t0
+                return (await send("GET", f"/v1/tasks/{rec.id}")).json()
 
             try:
                 created = await post("/v1/tasks", json=spec)
@@ -95,10 +120,10 @@ async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, prog
                     return
                 rec.id = created.json()["id"]
                 ran = await post(f"/v1/tasks/{rec.id}/run")
-                if ran.status_code != 200:
+                if ran.status_code != 202:
                     rec.status, rec.error = f"http_{ran.status_code}", ran.text[:300]
                     return
-                report = ran.json()
+                report = await follow()
                 rec.status, rec.spent = report["status"], report["spent"]["wd"]
                 rec.depth = max((c["depth"] for c in report["calls"]), default=0)
                 rec.sim = report.get("artifacts", {}).get("sim", {})
@@ -144,6 +169,8 @@ async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, prog
                 spec["inputs"]["_persona"] = persona
             rec = TaskRecord(len(records) + 1, g.kind, g.budget_class, spec["budget"], agents[aid]["name"], persona,
                              impossible=bool(g.meta.get("impossible")))
+            if rng.random() < cfg.cancel_rate:
+                rec.cancel_after_s = rng.uniform(0.2, 3.0)
             records.append(rec)
             running.append(asyncio.create_task(one(rec, spec)))
             await asyncio.sleep(rng.expovariate(cfg.rate) if cfg.rate > 0 else 0)
@@ -173,7 +200,7 @@ def _pct(xs: list[float], p: float) -> float:
 
 
 def _group(records: list[TaskRecord]) -> dict:
-    gradable = [r for r in records if not r.impossible]
+    gradable = [r for r in records if not r.impossible and r.status != "cancelled"]
     lat = [r.latency_s for r in records]
     sims = [r.sim for r in records if r.sim]
     return {
@@ -196,6 +223,8 @@ def _group(records: list[TaskRecord]) -> dict:
         "replays": sum(s.get("replays", 0) + s.get("provider_replays", 0) for s in sims),
         "key_drops": sum(s.get("key_drops", 0) for s in sims),
         "duplicated": sum(r.duplicated for r in records),
+        "cancelled": sum(r.status == "cancelled" for r in records),
+        "first_event_p50_s": round(_pct([r.first_event_s for r in records if r.first_event_s is not None], 50), 3),
     }
 
 
@@ -270,7 +299,8 @@ def format_report(rep: dict) -> str:
 
     o = rep["overall"]
     out = [
-        f"{o['n']} tasks in {rep['wall_s']}s ({rep['throughput_per_s']}/s)   statuses {o['statuses']}",
+        f"{o['n']} tasks in {rep['wall_s']}s ({rep['throughput_per_s']}/s)   statuses {o['statuses']}   "
+        f"first event p50 {o['first_event_p50_s']}s",
         f"audit ok: {rep['audit'].get('ok')}   ledger {rep['ledger_counts']}   "
         f"tasks failed by injected agent-host faults: {rep['injected_task_errors']}",
         "",

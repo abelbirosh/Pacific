@@ -138,7 +138,7 @@ def cmd_sim(args, config: Config):
     cfg = TrafficConfig(tasks=args.tasks, duration_s=args.duration, rate=args.rate, concurrency=args.concurrency,
                         seed=args.seed, think_scale=args.think_scale,
                         personas=args.personas.split(",") if args.personas else None,
-                        research=not args.no_research)
+                        research=not args.no_research, cancel_rate=args.cancel_rate)
 
     def progress(r):
         if not args.quiet:
@@ -245,11 +245,41 @@ def cmd_task_run(args, config: Config):
     api = Api(config)
     task = api("POST", "/v1/tasks", json=spec)
     print(f"Created {task['id']} for {task['agent']} with budget {task['budget']['display']}; running...")
-    report = api("POST", f"/v1/tasks/{task['id']}/run")
+    api("POST", f"/v1/tasks/{task['id']}/run")
+    report = follow(api, task["id"], quiet=args.json)
     if args.json:
         print(json.dumps(report, indent=2))
     else:
         print_report(report)
+
+
+def follow(api, task_id: str, quiet: bool = False) -> dict:
+    """Print a task's events as they happen until it finishes; returns its report."""
+    cursor, status = None, "running"
+    while status not in ("passed", "failed", "error", "cancelled"):
+        page = api("GET", f"/v1/tasks/{task_id}/events", params={"wait": 30, **({"cursor": cursor} if cursor else {})})
+        cursor, status = page["cursor"], page["status"]
+        for e in page["events"]:
+            if not quiet:
+                print(describe_event(e))
+    return api("GET", f"/v1/tasks/{task_id}")
+
+
+def describe_event(e: dict) -> str:
+    pad = "  " * (e.get("depth", 0) + 1)
+    if e["type"] == "call":
+        return f"{pad}{e['caller']} -> {e['service']}/{e['endpoint']}  {e['status']}  {e['cost']:.4f} WD"
+    if e["type"] == "hire":
+        return f"{pad}{e['buyer']} hires {e['seller']} ({e['service']}) with a {e['budget']} WD budget"
+    if e["type"] == "check":
+        return f"  check {e['check']}: {'pass' if e['passed'] else 'FAIL'}  {e['detail'][:90]}"
+    if e["type"] == "state":
+        return f"[{e['status']}]"
+    return f"  {e['type']}"
+
+
+def cmd_task_watch(args, config: Config):
+    print_report(follow(Api(config), args.id))
 
 
 def cmd_task_show(args, config: Config):
@@ -294,6 +324,7 @@ def main(argv: list[str] | None = None):
     s.add_argument("--personas", help="comma-separated personas to use for every task, instead of each agent's")
     s.add_argument("--faults", default="mild", help="none | mild | harsh | chaos")
     s.add_argument("--no-research", action="store_true", help="skip research tasks (servers without search)")
+    s.add_argument("--cancel-rate", type=float, default=0.0, help="share of tasks their owner cancels partway")
     s.add_argument("--json", help="write the full report here")
     s.add_argument("--quiet", action="store_true", help="don't print each task as it finishes")
     s.set_defaults(fn=cmd_sim)
@@ -348,6 +379,12 @@ def main(argv: list[str] | None = None):
     s.add_argument("--json", action="store_true")
     s.add_argument("--trace", action="store_true")
     s.set_defaults(fn=cmd_task_show)
+    s = t.add_parser("watch", help="follow a running task's events until it finishes")
+    s.add_argument("id")
+    s.set_defaults(fn=cmd_task_watch)
+    s = t.add_parser("cancel", help="stop a running task")
+    s.add_argument("id")
+    s.set_defaults(fn=lambda args, config: print(Api(config)("POST", f"/v1/tasks/{args.id}/cancel")))
     sub.add_parser("tasks", help="list tasks").set_defaults(fn=cmd_tasks)
 
     args = p.parse_args(argv)

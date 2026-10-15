@@ -127,6 +127,7 @@ Agents work with the exchange through a small protocol inspired by the [Personal
 - **Discovery:** `GET /.well-known/pacific.json` (`pacific discover`) gives the version, endpoints, error codes and rate limits.
 - **Error codes:** every refusal carries a machine-readable code: `{"error": "budget_exceeded", "detail": "..."}`.
 - **Rate limits:** each credential is rate limited (`PACIFIC_RATE_PER_S`, `PACIFIC_RATE_BURST`). Over the limit, requests get 429 `rate_limited` with `Retry-After`.
+- **Async tasks:** `POST /v1/tasks/{id}/run` returns 202 at once. Follow the task at `GET /v1/tasks/{id}/events` (cursor and long-poll, or server-sent events), and stop it with `POST /v1/tasks/{id}/cancel`. `pacific task run` prints events live, and `pacific task watch <id>` follows a task that's already running.
 - **Idempotent requests:** send `Idempotency-Key` with a call, transfer or task, and reuse it when retrying. A retry gets the original response and is never redone or charged twice, even when the provider did the work and then lost the reply.
 
 ## HTTP API (exchange)
@@ -141,7 +142,8 @@ Agents work with the exchange through a small protocol inspired by the [Personal
 | `GET /v1/jobs/{id}` | budget / spent / held / remaining |
 | `POST /v1/transfer` | send WD to another account |
 | `POST /v1/services` | agent lists a delegation skill |
-| `POST /v1/tasks`, `POST /v1/tasks/{id}/run`, `GET /v1/tasks/{id}` | task lifecycle and report (admin, or the agent's owner) |
+| `POST /v1/tasks`, `POST /v1/tasks/{id}/run`, `GET /v1/tasks/{id}` | task lifecycle and report (admin or owner; the agent may read) |
+| `GET /v1/tasks/{id}/events`, `POST /v1/tasks/{id}/cancel` | follow a task's events (cursor, long-poll, SSE); cancel it |
 | `GET /v1/admin/{accounts,transactions,audit}`, `POST /v1/admin/{mint,transfer}` | admin |
 
 Auth uses `Authorization: Bearer <key>`. Keys live in `.pacific/secrets.json`, which is gitignored.

@@ -28,9 +28,12 @@ def boot(home: Path, seed: int = 1, brain: str = "scripted"):
         yield config, secrets, admin
 
 
-def run_task(admin: httpx.Client, spec: dict) -> dict:
+def run_task(admin: httpx.Client, spec: dict, wait: float = 300) -> dict:
+    """Create and run a task, waiting for its report."""
     task = admin.post("/v1/tasks", json=spec).raise_for_status().json()
-    return admin.post(f"/v1/tasks/{task['id']}/run").raise_for_status().json()
+    r = admin.post(f"/v1/tasks/{task['id']}/run", params={"wait": wait}).raise_for_status()
+    assert r.status_code == 200, f"task {task['id']} didn't finish within {wait}s"
+    return r.json()
 
 
 def agent_with(secrets: dict, skill: str | None = None, without: str | None = None) -> tuple[str, dict]:
