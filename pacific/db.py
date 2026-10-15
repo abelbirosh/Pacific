@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS calls (
     status         TEXT NOT NULL DEFAULT 'pending', -- pending | ok | failed | rejected
     error          TEXT,
     latency_ms     INTEGER,
+    idempotency_key TEXT,
     started_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
@@ -111,6 +112,18 @@ CREATE TABLE IF NOT EXISTS tasks (
     artifacts   TEXT,                      -- what the brain chose to report (JSON)
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     finished_at TEXT
+);
+
+-- Idempotency-Key -> the stored final response, so a retried request is answered, not redone.
+CREATE TABLE IF NOT EXISTS idempotency (
+    account_id  TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,               -- hash of what was asked for
+    state       TEXT NOT NULL DEFAULT 'pending', -- pending | done
+    status_code INTEGER,
+    response    TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (account_id, key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_tx_call ON transactions(call_id);
@@ -139,6 +152,9 @@ class Database:
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(tasks)")}
         if "artifacts" not in cols:
             self._conn.execute("ALTER TABLE tasks ADD COLUMN artifacts TEXT")
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(calls)")}
+        if "idempotency_key" not in cols:
+            self._conn.execute("ALTER TABLE calls ADD COLUMN idempotency_key TEXT")
 
     @contextmanager
     def tx(self):

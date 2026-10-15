@@ -127,6 +127,7 @@ Agents work with the exchange through a small protocol inspired by the [Personal
 - **Discovery:** `GET /.well-known/pacific.json` (`pacific discover`) gives the version, endpoints, error codes and rate limits.
 - **Error codes:** every refusal carries a machine-readable code: `{"error": "budget_exceeded", "detail": "..."}`.
 - **Rate limits:** each credential is rate limited (`PACIFIC_RATE_PER_S`, `PACIFIC_RATE_BURST`). Over the limit, requests get 429 `rate_limited` with `Retry-After`.
+- **Idempotent requests:** send `Idempotency-Key` with a call, transfer or task, and reuse it when retrying. A retry gets the original response and is never redone or charged twice, even when the provider did the work and then lost the reply.
 
 ## HTTP API (exchange)
 

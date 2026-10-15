@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 import statistics
 import time
 from collections import Counter, defaultdict
@@ -50,6 +51,7 @@ class TaskRecord:
     spent: float = 0.0
     depth: int = 0
     error: str | None = None
+    duplicated: bool = False  # a row count came out higher than seeded: some work ran twice
     sim: dict = field(default_factory=dict)
 
 
@@ -100,6 +102,7 @@ async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, prog
                 rec.status, rec.spent = report["status"], report["spent"]["wd"]
                 rec.depth = max((c["depth"] for c in report["calls"]), default=0)
                 rec.sim = report.get("artifacts", {}).get("sim", {})
+                rec.duplicated = any(_ran_twice(c) for c in report.get("checks", []))
                 if rec.status != "passed":
                     rec.error = (report.get("output") or "")[:300]
             except httpx.HTTPError as e:
@@ -190,6 +193,9 @@ def _group(records: list[TaskRecord]) -> dict:
         "gave_up": sum(bool(s.get("gave_up")) for s in sims),
         "probes": sum(len(s.get("probes", [])) for s in sims),
         "rate_limited": sum(s.get("errors", {}).get("rate_limited", 0) for s in sims),
+        "replays": sum(s.get("replays", 0) + s.get("provider_replays", 0) for s in sims),
+        "key_drops": sum(s.get("key_drops", 0) for s in sims),
+        "duplicated": sum(r.duplicated for r in records),
     }
 
 
@@ -224,6 +230,15 @@ def summarize(records: list[TaskRecord], violations: list[dict], wall: float, cf
     }
 
 
+def _ran_twice(check: dict) -> bool:
+    """A failed exact row-count check that came out high means some insert ran twice."""
+    c = check.get("check", {})
+    if check.get("passed") or c.get("type") != "db_query_equals" or not str(c.get("sql", "")).startswith("SELECT COUNT(*)"):
+        return False
+    m = re.match(r"query returned (\d+) ", check.get("detail", ""))
+    return bool(m) and int(m.group(1)) > c["expected"]
+
+
 def is_crash(r: TaskRecord) -> bool:
     """A failure of the system itself, as opposed to one the run injected or a task that just failed."""
     err = r.error or ""
@@ -239,12 +254,13 @@ def _bucket(records, key):
 
 
 def format_report(rep: dict) -> str:
-    cols = ["n", "pass", "p50 s", "p95 s", "spend", "used", "depth", "quote", "fumbl", "retry", "429", "hires", "quit",
-            "probe"]
+    cols = ["n", "pass", "p50 s", "p95 s", "spend", "used", "depth", "quote", "fumbl", "retry", "429", "replay",
+            "dup", "hires", "quit", "probe"]
     row = lambda name, g: [name, str(g["n"]), "-" if g["pass_rate"] is None else f"{g['pass_rate']:.0%}",
                            f"{g['latency_p50_s']:.2f}", f"{g['latency_p95_s']:.2f}", f"{g['mean_spend']:.2f}",
                            f"{g['budget_used']:.0%}", str(g["max_depth"]), str(g["quotes"]), str(g["fumbles"]),
-                           str(g["retries"]), str(g["rate_limited"]), str(g["hires"]), str(g["gave_up"]), str(g["probes"])]
+                           str(g["retries"]), str(g["rate_limited"]), str(g["replays"]), str(g["duplicated"]),
+                           str(g["hires"]), str(g["gave_up"]), str(g["probes"])]
 
     def table(title, groups):
         rows = [row(k, g) for k, g in groups.items()]

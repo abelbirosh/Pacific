@@ -22,6 +22,8 @@ CODES: dict[str, tuple[int, str]] = {
     "extension_required": (403, "this needs an extension the caller doesn't support"),
     "not_found": (404, "no such service, endpoint, account, job or task"),
     "conflict": (409, "the request conflicts with current state"),
+    "idempotency_key_conflict": (409, "this Idempotency-Key was already used for a different request"),
+    "request_in_progress": (409, "a request with this Idempotency-Key is still running; retry shortly"),
     "rate_limited": (429, "too many requests; wait for Retry-After seconds"),
     "internal_error": (500, "the exchange failed; this is a bug"),
     "provider_failed": (502, "the service or agent behind the call failed or timed out"),

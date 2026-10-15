@@ -48,6 +48,23 @@ When a platform call fails at the provider, the exchange returns the receipt wit
 
 Each credential has a token bucket: `PACIFIC_RATE_PER_S` (default 100) refills it and `PACIFIC_RATE_BURST` (default 2× the rate) caps it (PAP §4.3). Over the limit, the request gets 429 `rate_limited` with `Retry-After`, and the caller must wait at least that long. Requests without credentials share one bucket per client address, and the admin key is exempt. `PACIFIC_RATE_PER_S=0` turns limits off.
 
+## Idempotent requests
+
+Send `Idempotency-Key: <unique string>` with a paid call, a transfer or a task creation, and send the same key when retrying it (PAP §7.3). The key must be unique for your account, and can be 1–255 characters.
+
+| A request with a key that... | gets |
+|---|---|
+| hasn't been seen | processed as usual; the response is stored once its outcome is final |
+| was seen with the same request, and finished | the stored response, with `Idempotent-Replayed: true`, no new hold and no new charge |
+| was seen with the same request, and is still running | 409 `request_in_progress`, with `Retry-After` |
+| was seen with a different request | 409 `idempotency_key_conflict` |
+
+A final outcome is a success, a provider's own refusal (4xx), or a finished hire. Outcomes a retry could change aren't stored, so the key can be retried: a provider's 5xx, a timeout, or a refusal raised before anything ran (for example `budget_exceeded`).
+
+The key also reaches the provider. The exchange signs a stable id derived from the account and key into the grant it forwards (`idem`). The provider keeps its response to that id for an hour. Suppose the provider did the work but its reply was lost: it errored afterwards, or the exchange timed out first. The exchange's retry is then answered from the provider's record instead of the work being redone, and is charged once. The receipt says `provider_replayed: true`. A copy of a request that arrives while the original is still running waits for it.
+
+Without a key, a retry after a lost reply does the work again. For example, an `execute_many` inserts its rows twice.
+
 ## Calls between the exchange and providers
 
 Providers (the platform services and the agent host) accept a request only if it carries a grant the exchange signed for that exact call (see `pacific/grants.py`). This is Pacific's counterpart to PAP's key-bound tokens, in the exchange-to-provider direction.
@@ -59,12 +76,13 @@ Providers (the platform services and the agent host) accept a request only if it
 - **The adversary's `flood` probe** sends far more requests than the burst, in parallel. The exchange must never accept more than burst + rate × elapsed, and must answer the rest with `rate_limited`.
 - **Probes are graded by code.** A refusal with a different code than expected is reported but isn't a violation.
 - **`pacific sim` reports** 429s per persona and every refusal code the agents saw.
+- **Personas send an `Idempotency-Key`** with every paid call and transfer, and reuse it on retries. The sloppy persona sometimes retries with a fresh key, which can repeat work. Generated database tasks check exact row counts, so the report's `dup` column counts any work that ran twice.
+- **The adversary's `key_reuse` probe** reuses a key for a different request (must be refused) and for the same one (must be replayed), and checks that only the first was charged. The `idempotent_once` invariant checks that no key is ever charged twice.
 
 ## Planned (see the adoption plan)
 
 | PAP idea | Pacific phase |
 |---|---|
-| Message IDs make retries safe (§7.3) | 2: `Idempotency-Key` on calls, transfers and tasks, carried through to providers |
 | Async conversations: cursor, wait, status, server-sent events (§7.5–7.7) | 3: task runs return 202, with `GET /v1/tasks/{id}/events` |
 | Agent identity, key-bound session tokens, scopes, revocation (§4.1–4.3, 4.8–4.9) | 4: agents sign in with their own keys, get DPoP-bound, scoped, job-limited tokens; owners can revoke |
 

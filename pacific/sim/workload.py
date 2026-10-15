@@ -110,6 +110,7 @@ class Workload:
                 {"type": "db_columns", "db": db, "table": table, "columns": [c for c, _, _ in cols]},
                 {"type": "db_min_rows", "db": db, "table": table, "min": n},
                 {"type": "db_query_equals", "db": db, "sql": f"SELECT SUM(amount_cents) FROM {table}", "expected": total},
+                {"type": "db_query_equals", "db": db, "sql": f"SELECT COUNT(*) FROM {table}", "expected": n},
                 {"type": "used_service", "service": "ocean_db"},
             ],
         }, estimate=5.5 + 0.0005 * n, kind="database", meta={"rows": n})

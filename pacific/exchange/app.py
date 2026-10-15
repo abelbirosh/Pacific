@@ -29,7 +29,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
 
 from ..config import Config
-from .. import invariants, ratelimit
+from .. import idempotency, invariants, ratelimit
 from ..db import Database
 from ..errors import CODES, PacificError, body as error_body, code_for
 from ..grants import Signer
@@ -54,6 +54,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
     delegation_timeout = float(os.environ.get("PACIFIC_DELEGATION_TIMEOUT", DELEGATION_TIMEOUT))
     db = db or Database(config.ledger_path)
     signer = Signer.load(config.home)  # signs a grant for every request forwarded to a provider
+    idem = idempotency.Store(db, stale_after_s=delegation_timeout + 60)
     ledger, registry = Ledger(db), Registry(db)
     # No connection cap: a delegated call holds its connection while the hired agent makes calls
     # of its own, so a capped pool can fill with callers waiting on callees that can't connect.
@@ -205,13 +206,16 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         memo: str = ""
 
     @app.post("/v1/transfer")
-    def transfer(req: Transfer, acct=Depends(account)):
-        dest = ledger.resolve(req.to)
-        if dest is None:
-            raise HTTPException(404, f"no account {req.to!r}")
-        with db.tx() as conn:
-            ledger.transfer(conn, acct["id"], dest["id"], to_micro(req.amount), req.memo)
-        return {"ok": True, "to": dest["id"], "amount": money(to_micro(req.amount))}
+    async def transfer(req: Transfer, acct=Depends(account), idempotency_key: str | None = Header(default=None)):
+        async def handler():
+            dest = ledger.resolve(req.to)
+            if dest is None:
+                raise HTTPException(404, f"no account {req.to!r}")
+            with db.tx() as conn:
+                ledger.transfer(conn, acct["id"], dest["id"], to_micro(req.amount), req.memo)
+            return 200, {"ok": True, "to": dest["id"], "amount": money(to_micro(req.amount))}, True
+
+        return await idem.run(acct["id"], idempotency_key, idempotency.fingerprint("transfer", req.model_dump()), handler)
 
     @app.get("/v1/jobs/{job_id}")
     def job(job_id: str, who=Depends(admin_or_account)):
@@ -242,14 +246,26 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         acct=Depends(account),
         x_pacific_job: str | None = Header(default=None),
         x_pacific_max_cost: float | None = Header(default=None),
+        idempotency_key: str | None = Header(default=None),
     ):
+        body = await _json(request)
+        return await idem.run(
+            acct["id"], idempotency_key,
+            idempotency.fingerprint("call", service, endpoint, x_pacific_job, x_pacific_max_cost, body),
+            lambda: _call(service, endpoint, body, acct, x_pacific_job, x_pacific_max_cost, idempotency_key),
+        )
+
+    async def _call(service: str, endpoint: str, body: dict, acct, x_pacific_job: str | None,
+                    x_pacific_max_cost: float | None, idempotency_key: str | None) -> tuple[int, dict, bool]:
+        """One metered call. Returns (HTTP status, body, final): `final` is False for outcomes
+        a retry could change (the provider failed or timed out), which aren't kept for replay."""
         svc, ep = registry.service(service), registry.endpoint(service, endpoint)
         if svc is None or ep is None:
             raise HTTPException(404, f"no endpoint {service}/{endpoint}")
         if svc["provider_id"] == acct["id"]:
             raise HTTPException(400, "an agent cannot buy its own service")
-        body = await _json(request)
         plan = registry.plan(ep)
+        idem_claim = idempotency.provider_id(acct["id"], idempotency_key) if idempotency_key else None
 
         job = None
         if x_pacific_job:
@@ -270,22 +286,23 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         with db.tx() as conn:
             hold_id = ledger.place_hold(conn, acct["id"], hold_amount, x_pacific_job)
             conn.execute(
-                "INSERT INTO calls(id, caller_id, service, endpoint, job_id, held) VALUES (?,?,?,?,?,?)",
-                (call_id, acct["id"], service, endpoint, x_pacific_job, hold_amount),
+                "INSERT INTO calls(id, caller_id, service, endpoint, job_id, held, idempotency_key) VALUES (?,?,?,?,?,?,?)",
+                (call_id, acct["id"], service, endpoint, x_pacific_job, hold_amount, idempotency_key),
             )
 
         workspace = job["root_job_id"] if job else acct["id"]
         t0 = time.monotonic()
         cost, units, status, error, payload, http_status = 0, 0.0, "failed", None, None, 502
-        child = None
+        child, provider_replayed = None, False
         try:
             if svc["kind"] == "platform":
                 raw = json.dumps(body).encode()
                 resp = await http.post(
                     svc["base_url"] + ep["path"], content=raw, timeout=platform_timeout,
-                    headers=signer.headers(ep["path"], raw, ws=workspace, call=call_id, sub=acct["id"]),
+                    headers=signer.headers(ep["path"], raw, ws=workspace, call=call_id, sub=acct["id"], idem=idem_claim),
                 )
                 http_status = resp.status_code
+                provider_replayed = resp.headers.get(idempotency.REPLAYED) == "true"
                 data = resp.json()
                 if resp.is_success:
                     units = float(data.get("usage", {}).get("units", 0))
@@ -300,7 +317,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                                   "skill": json.loads(svc["meta"]).get("skill")}).encode()
                 resp = await http.post(
                     svc["base_url"] + ep["path"], content=raw, timeout=delegation_timeout,
-                    headers=signer.headers(ep["path"], raw, ws=workspace, call=call_id, sub=acct["id"]),
+                    headers=signer.headers(ep["path"], raw, ws=workspace, call=call_id, sub=acct["id"], idem=idem_claim),
                 )
                 with db.tx() as conn:
                     conn.execute("UPDATE jobs SET status = 'closed' WHERE id = ?", (child,))
@@ -334,14 +351,14 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         receipt = {
             "call_id": call_id, "service": service, "endpoint": endpoint, "status": status,
             "cost": money(charged), "units": units, "latency_ms": latency,
-            "job": _job_brief(x_pacific_job),
+            "job": _job_brief(x_pacific_job), "provider_replayed": provider_replayed,
         }
         if status != "ok" and svc["kind"] == "platform":
             http_status = http_status if http_status >= 400 else 502
             # A provider's 5xx is the provider failing, never the exchange (internal_error is ours).
             code = "provider_failed" if http_status >= 500 else code_for(http_status)
-            return JSONResponse({**receipt, "error": code, "detail": error}, status_code=http_status)
-        return {**receipt, "result": payload, "error": error}
+            return http_status, {**receipt, "error": code, "detail": error}, http_status < 500
+        return 200, {**receipt, "result": payload, "error": error}, True
 
     def _job_brief(job_id: str | None) -> dict | None:
         if not job_id:
@@ -361,7 +378,14 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         checks: list[dict] = Field(default_factory=list)
 
     @app.post("/v1/tasks")
-    def create_task(req: TaskIn, who=Depends(admin_or_account)):
+    async def create_task(req: TaskIn, who=Depends(admin_or_account), idempotency_key: str | None = Header(default=None)):
+        async def handler():
+            return 200, _create_task(req, who), True
+
+        return await idem.run("admin" if who is None else who["id"], idempotency_key,
+                              idempotency.fingerprint("task", req.model_dump()), handler)
+
+    def _create_task(req: TaskIn, who) -> dict:
         agent = ledger.resolve(req.agent)
         if agent is None or agent["kind"] != "agent":
             raise HTTPException(404, f"no agent {req.agent!r}")
