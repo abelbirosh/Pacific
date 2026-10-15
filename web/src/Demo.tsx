@@ -2,79 +2,81 @@ import { useState } from 'react'
 import type { CSSProperties, KeyboardEvent, ReactNode } from 'react'
 
 /*
- * One request, followed through Pacific's four stages. The numbers follow the exchange's own rules:
- * a delegation costs fee + the seller's actual spend x (1 + markup), the hold is the worst case,
- * and the buyer is charged what was really used and gets the rest back.
+ * One request, followed through Pacific's four stages. It is the repo's tasks/build_feature.json: a job that needs
+ * three skills the buyer lacks, so it hires three agents run by three different companies, each of which pays for
+ * services of its own. The numbers follow the exchange's rules: a hire costs fee + the seller's real spend
+ * x (1 + markup), the hold is the worst case, and the buyer pays only what was used.
  */
 
 type Line = { route: string; body: ReactNode; tag?: string }
 type Meter = { held?: number; spent?: number; released?: number }
 type Stage = { name: string; summary: string; lines: Line[]; meter: Meter | null; note: string }
 
-const BUDGET = 20
-const wd = (n: number) => n.toFixed(2) + ' WD'
+const BUDGET = 60
+const ws = (n: number) => 'Wave $' + n.toFixed(2)
 const tick = <span className="demo-ok" aria-label="passed">✓</span>
 
 const STAGES: Stage[] = [
   {
     name: 'Discovery',
-    summary: 'Claude can’t do this research well alone. It asks Pacific who sells research and gets priced offers back to compare before it spends anything.',
+    summary: 'Your agent can’t do any of the three jobs itself. It asks Pacific who sells each skill and compares priced offers before it spends anything.',
     note: 'Browsing the catalog is free. No budget is open yet.',
     meter: null,
     lines: [
-      { route: 'Claude → Pacific', body: <code>GET /v1/services?skill=research</code> },
+      { route: 'Your agent → Pacific', body: <code>GET /v1/services?skill=research,database,security_audit</code> },
       {
-        route: 'Pacific → Claude',
+        route: 'Pacific → Your agent',
         body: (
           <table className="demo-offers">
             <tbody>
-              <tr><td>ocean_exa</td><td>search</td><td>3.00 WD + 0.80 / page</td></tr>
-              <tr><td>ocean_tavily</td><td>search</td><td>1.00 WD + 0.50 / page</td></tr>
-              <tr className="is-picked"><td>kelp.research</td><td>agent</td><td>2.00 WD fee + cost +15%</td></tr>
+              <tr className="is-picked"><td>kelp.research</td><td>Tidewater Labs</td><td>$2.00 fee + cost +15%</td></tr>
+              <tr className="is-picked"><td>reef.database</td><td>Harbor Data</td><td>$1.50 fee + cost +10%</td></tr>
+              <tr><td>tide.security_audit</td><td>Breakwater</td><td>$5.00 fee + cost +25%</td></tr>
+              <tr className="is-picked"><td>shoal.security_audit</td><td>Lighthouse Sec</td><td>$3.00 fee + cost +20%</td></tr>
             </tbody>
           </table>
         ),
       },
-      { route: 'Claude', body: <>Picks <strong>Kelp</strong>, a research agent. It gets a specialist and pays only for the work Kelp actually does.</>, tag: 'chosen' },
+      { route: 'Your agent', body: <>Picks <strong>Kelp</strong>, <strong>Reef</strong> and <strong>Shoal</strong>: three agents from three companies it has never dealt with</>, tag: 'chosen' },
     ],
   },
   {
     name: 'Authentication',
-    summary: 'Before any money moves, Pacific checks who is asking, who is responsible for them, and how much they can spend on this task.',
-    note: 'The budget is open. Every call from here on counts against it.',
+    summary: 'Before any money moves, Pacific checks who is asking, who is responsible for them, and how much they can spend across every agent they hire.',
+    note: 'One budget now covers the whole job, including everyone your agent hires.',
     meter: {},
     lines: [
-      { route: 'Claude → Pacific', body: <code>Authorization: Bearer ••••3f9a</code> },
-      { route: 'Pacific', body: <>Resolves <strong>agent:claude</strong>, owned by Northwind Labs, wallet 412.00 WD</>, tag: 'verified' },
-      { route: 'Pacific → Claude', body: <><code>X-Pacific-Job: job_7Q2</code> is opened with a budget of {wd(BUDGET)}</> },
-      { route: 'Pacific', body: <>Kelp is a verified seller of <code>research</code>. Kelp can’t hire Claude back into this chain.</>, tag: 'verified' },
+      { route: 'Your agent → Pacific', body: <code>Authorization: Bearer ••••3f9a</code> },
+      { route: 'Pacific', body: <>Resolves <strong>your agent</strong>, owned by your company, with a wallet of {ws(412)}</>, tag: 'verified' },
+      { route: 'Pacific → Your agent', body: <><code>X-Pacific-Job: job_7Q2</code> is opened with a budget of {ws(BUDGET)}</> },
+      { route: 'Pacific', body: <>Kelp, Reef and Shoal are verified sellers. None of them can hire your agent back into this job.</>, tag: 'verified' },
     ],
   },
   {
     name: 'Transaction',
-    summary: 'Pacific reserves the worst case up front, lets the work run, then charges only for what was used and returns the rest.',
-    note: 'The hold covered the worst case. The charge is what Kelp really spent, plus its fee and markup.',
-    meter: { held: 18.1, spent: 9.26, released: 8.84 },
+    summary: 'Pacific reserves the worst case for all three hires, lets the work run, then charges only for what each agent actually used.',
+    note: 'Each agent paid for its own services. Your agent was charged their real cost plus fee and markup.',
+    meter: { held: 51.5, spent: 21.87, released: 29.63 },
     lines: [
-      { route: 'Claude → Pacific', body: <>Hires <code>kelp.research</code> and gives Kelp a budget of {wd(14)}</> },
-      { route: 'Pacific', body: <>Holds {wd(18.1)}, the worst case: 2.00 fee + 14.00 × 1.15</>, tag: 'hold' },
-      { route: 'Pacific → Kelp', body: <>Opens child job <code>job_7Q2.1</code> with Kelp’s budget of {wd(14)}</> },
-      { route: 'Kelp → ocean_exa', body: <>Searches <code>"python password hashing argon2 bcrypt"</code>, reads 4 pages, costs {wd(6.2)}</> },
-      { route: 'Kelp → ocean_storage', body: <>Saves <code>research/password-hashing.md</code> (6 KB), costs {wd(0.11)}</> },
-      { route: 'Pacific', body: <>Charges {wd(9.26)}: 2.00 + 6.31 × 1.15. Releases {wd(8.84)}</>, tag: 'settled' },
+      { route: 'Your agent → Pacific', body: <>Hires Kelp, Reef and Shoal with budgets of {ws(12)}, {ws(12)} and {ws(15)}</> },
+      { route: 'Pacific', body: <>Holds {ws(51.5)}, the worst case for all three, inside the {ws(BUDGET)} budget</>, tag: 'hold' },
+      { route: 'Kelp → ocean_exa', body: <>Researches password hashing, reads 4 pages, saves the brief. Costs {ws(6.31)}</> },
+      { route: 'Reef → ocean_db', body: <>Creates the <code>accounts</code> database and seeds the first row. Costs {ws(5.1)}</> },
+      { route: 'Shoal → ocean_shield', body: <>Scans <code>signup.py</code> and flags MD5 password hashing and SQL built from strings. Costs {ws(2.08)}</> },
+      { route: 'Pacific', body: <>Charges {ws(21.87)}: each agent’s fee, plus its real cost and markup. Releases {ws(29.63)}</>, tag: 'settled' },
     ],
   },
   {
     name: 'Assurance',
-    summary: 'The task passes only after Pacific checks the real result, the saved file and the money, not when an agent says it’s done.',
-    note: 'Fulfilled. Claude has its brief, Kelp has been paid, and the ledger balances.',
-    meter: { spent: 9.26, released: 8.84 },
+    summary: 'The job passes only after Pacific checks the real result of every hire and the money, not when the agents say they’re done.',
+    note: 'Fulfilled. Three agents and four services, settled from one budget on one receipt.',
+    meter: { spent: 21.87, released: 29.63 },
     lines: [
-      { route: 'Kelp → Claude', body: <>Delivers the brief, with 4 sources, and reports the job done</> },
-      { route: 'Pacific checks', body: <>{tick} The saved brief <code>research/password-hashing.md</code> has a <code>## Sources</code> section</> },
-      { route: 'Pacific checks', body: <>{tick} The job used <code>ocean_exa</code> and spent {wd(9.26)}, within the {wd(BUDGET)} budget</> },
-      { route: 'Ledger', body: <>{tick} Every payment is recorded, and the total supply still equals the sum of all balances</> },
-      { route: 'Pacific → Claude', body: <>Receipt: <strong>task passed</strong>, {wd(9.26)} spent of {wd(BUDGET)}</>, tag: 'fulfilled' },
+      { route: 'Pacific checks', body: <>{tick} Kelp’s brief <code>signup/research.md</code> has a <code>## Sources</code> section</> },
+      { route: 'Pacific checks', body: <>{tick} Reef’s <code>accounts</code> table has <code>email</code> and <code>password_hash</code> and at least 1 row</> },
+      { route: 'Pacific checks', body: <>{tick} Shoal’s audit has a verdict and flags MD5 hashing (<code>B324</code>)</> },
+      { route: 'Ledger', body: <>{tick} {ws(21.87)} spent, within the budget. Total supply still equals the sum of all balances</> },
+      { route: 'Pacific → Your agent', body: <>Receipt: <strong>job passed</strong>, {ws(21.87)} spent of {ws(BUDGET)} across 3 agents</>, tag: 'fulfilled' },
     ],
   },
 ]
@@ -87,7 +89,7 @@ function BudgetMeter({ meter }: { meter: Meter | null }) {
     <div className={`demo-meter${meter ? '' : ' is-closed'}`}>
       <div className="demo-meter-top">
         <span>Job budget</span>
-        <span>{meter ? `${wd(spent)} spent of ${wd(BUDGET)}` : 'Not open'}</span>
+        <span>{meter ? `${ws(spent)} spent of ${ws(BUDGET)}` : 'Not open'}</span>
       </div>
       <div className="demo-bar" aria-hidden="true">
         <span className="demo-bar-held" style={{ width: pct(held) }} />
@@ -95,9 +97,9 @@ function BudgetMeter({ meter }: { meter: Meter | null }) {
       </div>
       {meter?.held != null && (
         <div className="demo-legend">
-          <span><i className="demo-key-held" /> held {wd(meter.held)}</span>
-          <span><i className="demo-key-spent" /> charged {wd(spent)}</span>
-          <span>released {wd(meter.released ?? 0)}</span>
+          <span><i className="demo-key-held" /> held {ws(meter.held)}</span>
+          <span><i className="demo-key-spent" /> charged {ws(spent)}</span>
+          <span>released {ws(meter.released ?? 0)}</span>
         </div>
       )}
     </div>
@@ -127,9 +129,25 @@ export function Demo() {
       <div className="demo-request">
         <span className="demo-eyebrow">Sample request</span>
         <p>
-          <strong>Claude</strong> is asked to research how to store passwords securely in Python and write a
-          brief with sources. It has a budget of <strong>{wd(BUDGET)}</strong>.
+          <strong>Your agent</strong> is asked to ship a signup feature: research how to hash passwords, build the
+          accounts database, and security-audit the signup code. It can’t do any of the three itself. Its budget
+          is <strong>{ws(BUDGET)}</strong>.
         </p>
+        <dl className="demo-why">
+          <div>
+            <dt>Without Pacific</dt>
+            <dd>
+              A separate account, key, contract and bill with three agents from three companies, and each of them needs
+              the same with every service it uses. No single cap covers them all, and nobody checks the work. Every extra
+              hand-off multiplies the setup again.
+            </dd>
+          </div>
+          <div>
+            <dt>With Pacific</dt>
+            <dd>One key, one budget across every hire, checks on the real result, and one receipt.</dd>
+          </div>
+        </dl>
+        <p className="demo-fine">Wave $ is simulated currency, used only for this demo.</p>
       </div>
 
       <ol className="demo-rail" role="tablist" aria-label="Stages of the request" onKeyDown={onRailKey}>

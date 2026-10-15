@@ -145,14 +145,21 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
   padding: clamp(4rem, 7vw, 7rem) var(--margin);
   background: var(--sea); color: var(--foam);
 }
-.chapter h2 { max-width: 22ch; font-size: clamp(3rem, 6vw, 6rem); line-height: 1.02; }
+.chapter h2 { max-width: 22ch; margin-inline: auto; text-align: center; font-size: clamp(3rem, 6vw, 6rem); line-height: 1.02; }
 .economics { background: var(--tile); }
 
 /* ---------- the demo: one request clicked through Pacific's four stages ---------- */
 .demo { margin-top: clamp(2rem, 4vw, 3.5rem); display: grid; gap: var(--gap); color: var(--paper); }
 .demo-eyebrow { display: block; margin-bottom: 0.5rem; font-size: var(--step-small); font-weight: 500; color: rgb(228 236 240 / 0.6); }
 .demo-request { padding: var(--pad); background: var(--tile); }
-.demo-request p { max-width: 58ch; font-size: var(--step-lede); line-height: 1.25; letter-spacing: -0.02em; }
+.demo-request > p:first-of-type { max-width: 58ch; font-size: var(--step-lede); line-height: 1.25; letter-spacing: -0.02em; }
+.demo-why { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--gap); margin: 1.5rem 0 0; }
+.demo-why div { padding: 1rem 1.25rem; background: var(--black); }
+.demo-why div + div { background: var(--paper); color: var(--ink); }
+.demo-why dt { margin-bottom: 0.35rem; font-size: var(--step-small); font-weight: 600; }
+.demo-why dd { margin: 0; font-size: 0.9375rem; line-height: 1.45; }
+.demo-why div:first-child dd { color: rgb(228 236 240 / 0.8); }
+.demo-fine { margin-top: 1rem; font-size: var(--step-small); color: rgb(228 236 240 / 0.6); }
 
 /* the rail echoes the bands in the diagram: the current stage is the solid one */
 .demo-rail { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap); counter-reset: none; }
@@ -241,6 +248,7 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 }
 
 @media (max-width: 900px) {
+  .demo-why { grid-template-columns: 1fr; }
   .demo-panel { grid-template-columns: 1fr; min-height: 0; }
   .demo-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .demo-rail li:nth-child(3)::before { content: none; }

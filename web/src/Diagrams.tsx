@@ -213,10 +213,12 @@ export function AfterDiagram() {
   const mid = (g: Group) => g.y + groupHeight(g.items.length) / 2
   const left: number[] = [...AGENTS.map(mid), 530]
   const right: number[] = PROVIDERS.map(mid)
-  const bandTop = 168
+  // the four stages run the full length of the slab, under its name
+  const inset = 16
+  const bandTop = 76
   const bandGap = 28
-  const bandH = 38
-  const bandWidths = [98, 132, 112, 104]
+  const bandH = (SLAB.h - inset - bandTop - bandGap * (LAYERS.length - 1)) / LAYERS.length
+  const bandW = SLAB.w - inset * 2
   const center = SLAB.x + SLAB.w / 2
 
   return (
@@ -237,14 +239,14 @@ export function AfterDiagram() {
       <Agents customInColumn />
       <g className="dg-slab">
         <rect x={SLAB.x} y={SLAB.y} width={SLAB.w} height={SLAB.h} />
-        <Label x={center} y={140} anchor="middle" size={24} weight={600}>Pacific</Label>
+        <Label x={center} y={48} anchor="middle" size={24} weight={600}>Pacific</Label>
         {LAYERS.map((l, k) => {
           const y = bandTop + k * (bandH + bandGap)
           return (
             <g key={l}>
-              <rect className="dg-band" x={center - bandWidths[k] / 2} y={y} width={bandWidths[k]} height={bandH} />
+              <rect className="dg-band" x={SLAB.x + inset} y={y} width={bandW} height={bandH} />
               <g className="dg-layer-label">
-                <Label x={center} y={y + 24} anchor="middle" size={16} weight={600}>{l}</Label>
+                <Label x={center} y={y + bandH / 2 + 6} anchor="middle" size={16} weight={600}>{l}</Label>
               </g>
               {k < LAYERS.length - 1 && (
                 <g className="dg-stage-arrow" aria-hidden="true">
