@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { CSSProperties } from 'react'
 import { AfterDiagram, BeforeDiagram } from './Diagrams'
+import { Demo } from './Demo'
 
 const A = '/assets/'
 const i = (n: number) => ({ '--i': n }) as CSSProperties
@@ -77,7 +78,10 @@ function Header() {
     <header className="header">
       <a className="wordmark" href="#top">Pacific</a>
       <nav className="nav" aria-label="Sections">
-        <a className="link" href="#before-after">Before and after</a>
+        <a className="link" href="#before-after">Before and After</a>
+        <a className="link" href="#demo">Demo</a>
+        <a className="link" href="#economics">Economics</a>
+        <a className="link" href="#future">Future</a>
       </nav>
     </header>
   )
@@ -134,10 +138,11 @@ function BeforeAfter() {
 function Chapters() {
   return (
     <>
-      <section className="chapter interaction" id="agent-to-agent-interaction" aria-labelledby="interaction-head">
+      <section className="chapter interaction" id="demo" aria-labelledby="interaction-head">
         <h2 id="interaction-head" data-reveal>Agent-to-agent Interaction</h2>
+        <Demo />
       </section>
-      <section className="chapter economics" id="first-customer-and-economics" aria-labelledby="economics-head">
+      <section className="chapter economics" id="economics" aria-labelledby="economics-head">
         <h2 id="economics-head" data-reveal>First customer and economics</h2>
       </section>
       <section className="chapter future" id="future" aria-labelledby="future-head">
