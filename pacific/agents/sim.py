@@ -57,9 +57,10 @@ class SimStats:
         return {**asdict(self), "violations": self.violations()}
 
 
-def think_scale() -> float:
+def think_scale(override=None) -> float:
+    """How long personas pause before decisions: inputs._think_scale, else PACIFIC_THINK_SCALE, else 1."""
     try:
-        return max(0.0, float(os.environ.get("PACIFIC_THINK_SCALE", "1")))
+        return max(0.0, float(override if override is not None else os.environ.get("PACIFIC_THINK_SCALE", "1")))
     except ValueError:
         return 1.0
 
@@ -67,9 +68,10 @@ def think_scale() -> float:
 class PersonaTools:
     """Wraps a Toolbox so every routine's tool calls pick up the persona's habits."""
 
-    def __init__(self, inner, persona: Persona, rng: random.Random, stats: SimStats, give_up_after: int | None):
+    def __init__(self, inner, persona: Persona, rng: random.Random, stats: SimStats, give_up_after: int | None,
+                 think_scale: float = 1.0):
         self.inner, self.p, self.rng, self.stats = inner, persona, rng, stats
-        self.give_up_after = give_up_after
+        self.give_up_after, self.think_scale = give_up_after, think_scale
 
     def __getattr__(self, name):
         return getattr(self.inner, name)
@@ -103,8 +105,8 @@ class PersonaTools:
 
     def _think(self):
         pause = self.rng.expovariate(1 / self.p.think_s) if self.p.think_s > 0 else 0.0
-        if pause and think_scale():
-            time.sleep(min(10.0, pause * think_scale()))
+        if pause and self.think_scale:
+            time.sleep(min(10.0, pause * self.think_scale))
 
     def _attempt(self, name: str, args: dict):
         for i in range(self.p.retries + 1):
@@ -163,7 +165,8 @@ class SimBrain(ScriptedBrain):
         self.stats = SimStats(name, seed)
         give_up = self.rng.randint(0, 2) if self.rng.random() < self.persona.abandon else None
         ctx = AgentContext(ctx.agent_id, ctx.agent_name, ctx.skills,
-                           PersonaTools(ctx.tools, self.persona, self.rng, self.stats, give_up))
+                           PersonaTools(ctx.tools, self.persona, self.rng, self.stats, give_up,
+                                        think_scale(task.inputs.get("_think_scale"))))
         try:
             self._browse(ctx)
             if self.persona.mischief:
@@ -243,6 +246,8 @@ class SimBrain(ScriptedBrain):
             return None
         inputs = {k: v for k, v in task.inputs.items() if not k.startswith("_") and k != "delegate"}
         inputs["_seed"] = rng.randrange(2**31)
+        if "_think_scale" in task.inputs:
+            inputs["_think_scale"] = task.inputs["_think_scale"]
         cycle = " (cycle)" if offer["provider_id"] in chain else ""
         self.stats.decisions.append(f"hire {offer['name']}{cycle} budget={sub_budget} depth={len(chain) + 1}")
         try:
@@ -287,8 +292,12 @@ class SimBrain(ScriptedBrain):
 
 
 class Probes:
-    """Things an adversarial agent tries. Each must be refused with the expected status and must
-    not move the job's spend. `known` marks a documented weakness (reported, not a violation)."""
+    """Things an adversarial agent tries. Each must be refused and must not move the job's spend.
+
+    A refusal with a different status than expected (say 402 because the hold was checked before
+    the input, or an upstream 503) is recorded as `unexpected` but is not a violation. A violation
+    is a probe the exchange accepted, charged for, or crashed on. `known` marks a documented
+    weakness (reported, not a violation)."""
 
     def __init__(self, ctx: AgentContext, rng: random.Random, stats: SimStats):
         self.ctx, self.rng, self.stats = ctx, rng, stats
@@ -363,9 +372,11 @@ class Probes:
         if expected is None:  # a known weakness: the response body says whether it held
             entry = {"probe": name, "expected": [], "status": r.status_code, "known": True, "charged": charged, **extra}
         else:
+            crashed = r.status_code >= 500 and not _is_json(r)  # the exchange itself fell over
             entry = {"probe": name, "expected": sorted(expected), "status": r.status_code, "charged": charged,
-                     "ok": r.status_code in expected and charged == 0}
-            if not entry["ok"]:
+                     "ok": r.status_code >= 400 and not crashed and charged == 0,
+                     "unexpected": r.status_code not in expected}
+            if not entry["ok"] or entry["unexpected"]:
                 entry["detail"] = r.text[:300]
         self.stats.probes.append(entry)
 
@@ -376,3 +387,11 @@ class Probes:
         r = self._post("/v1/call/ocean_sandbox/run", json={"code": code, "timeout_s": 2})
         stdout = (r.json().get("result") or {}).get("stdout", "") if r.is_success else ""
         return r, {"ok": "LEAK" not in stdout, "detail": stdout.strip()[:80]}
+
+
+def _is_json(r: httpx.Response) -> bool:
+    try:
+        r.json()
+        return True
+    except ValueError:
+        return False

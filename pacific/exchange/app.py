@@ -16,6 +16,7 @@ land in the root job's workspace, so checks can find them.
 
 import json
 import math
+import os
 import secrets as pysecrets
 import time
 from contextlib import asynccontextmanager
@@ -26,6 +27,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ..config import Config
+from .. import invariants
 from ..db import Database
 from ..ids import new_id
 from ..ledger import Ledger, LedgerError
@@ -39,9 +41,13 @@ DELEGATION_TIMEOUT = 900
 
 def create_app(config: Config, db: Database | None = None) -> FastAPI:
     secrets = config.secrets()
+    platform_timeout = float(os.environ.get("PACIFIC_PLATFORM_TIMEOUT", PLATFORM_TIMEOUT))
+    delegation_timeout = float(os.environ.get("PACIFIC_DELEGATION_TIMEOUT", DELEGATION_TIMEOUT))
     db = db or Database(config.ledger_path)
     ledger, registry = Ledger(db), Registry(db)
-    http = httpx.AsyncClient()
+    # No connection cap: a delegated call holds its connection while the hired agent makes calls
+    # of its own, so a capped pool can fill with callers waiting on callees that can't connect.
+    http = httpx.AsyncClient(limits=httpx.Limits(max_connections=None, max_keepalive_connections=200))
 
     @asynccontextmanager
     async def lifespan(_):
@@ -53,6 +59,16 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
     @app.exception_handler(LedgerError)
     async def ledger_error(_, exc: LedgerError):
         return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
+
+    # The exchange should refuse bad input, never fall over on it. Unhandled exceptions are kept
+    # (most recent 100) and reported by /v1/admin/invariants.
+    unhandled: list[dict] = []
+
+    @app.exception_handler(Exception)
+    async def unhandled_error(request: Request, exc: Exception):
+        unhandled.append({"path": request.url.path, "error": f"{type(exc).__name__}: {exc}"[:300]})
+        del unhandled[:-100]
+        return JSONResponse({"detail": "internal error"}, status_code=500)
 
     # ---- auth -------------------------------------------------------------------------------
 
@@ -124,7 +140,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
     def _price(plan, body: dict) -> int:
         try:
             return plan.max_cost(body)
-        except (TypeError, ValueError, ArithmeticError) as e:
+        except Exception as e:  # malformed input in a field the plan measures
             raise HTTPException(400, f"can't price this request: {type(e).__name__}: {e}")
 
     @app.post("/v1/quote/{service}/{endpoint}")
@@ -219,7 +235,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         try:
             if svc["kind"] == "platform":
                 resp = await http.post(
-                    svc["base_url"] + ep["path"], json=body, timeout=PLATFORM_TIMEOUT,
+                    svc["base_url"] + ep["path"], json=body, timeout=platform_timeout,
                     headers={
                         "X-Pacific-Gateway-Secret": secrets["gateway_secret"],
                         "X-Pacific-Workspace": workspace,
@@ -239,7 +255,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                     child = ledger.open_job(conn, svc["provider_id"], to_micro(body["budget"]), parent_job_id=x_pacific_job)
                     conn.execute("UPDATE calls SET child_job_id = ? WHERE id = ?", (child, call_id))
                 resp = await http.post(
-                    svc["base_url"] + ep["path"], timeout=DELEGATION_TIMEOUT,
+                    svc["base_url"] + ep["path"], timeout=delegation_timeout,
                     json={"task": body, "job_id": child, "buyer_id": acct["id"], "skill": json.loads(svc["meta"]).get("skill")},
                     headers={"X-Pacific-Gateway-Secret": secrets["gateway_secret"]},
                 )
@@ -331,7 +347,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                 f"{config.agents_url}/agents/{task['agent_id']}/run",
                 json={"task": spec, "job_id": task["job_id"]},
                 headers={"X-Pacific-Gateway-Secret": secrets["gateway_secret"]},
-                timeout=DELEGATION_TIMEOUT,
+                timeout=delegation_timeout,
             )
             result = resp.json() if resp.is_success else {"status": "error", "output": resp.text}
         except httpx.HTTPError as e:
@@ -435,6 +451,12 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
     def audit():
         a = ledger.audit()
         return {**a, **{k: to_wd(a[k]) for k in ("total_supply", "sum_of_balances", "sum_of_mints", "active_holds")}}
+
+    @app.get("/v1/admin/invariants", dependencies=[Depends(admin)])
+    def check_invariants(quiescent: bool = False):
+        report = invariants.check(db, config.data_dir, quiescent=quiescent)
+        crashes = [{"invariant": "unhandled_error", "detail": f"{u['path']}: {u['error']}"} for u in unhandled]
+        return {**report, "ok": report["ok"] and not crashes, "violations": report["violations"] + crashes}
 
     class Mint(BaseModel):
         to: str

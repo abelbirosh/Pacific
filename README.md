@@ -137,11 +137,36 @@ See `tasks/` for research (rich and shoestring budgets), database, security, cod
 
 Auth uses `Authorization: Bearer <key>`. Keys live in `.pacific/secrets.json`, which is gitignored. Platform services and the agent host accept calls only from the exchange, via a shared gateway secret.
 
+## Traffic simulation
+
+`pacific sim` drives concurrent traffic from sim-brain agents through the economy and grades how it held up:
+
+```bash
+uv run pacific sim --boot                                   # fresh throwaway economy, 50 tasks, mild faults
+uv run pacific sim --boot --tasks 300 --concurrency 48 --rate 20 --faults chaos --json report.json
+uv run pacific sim --boot --personas sloppy,adversary       # every task as one of these personas
+uv run pacific sim --tasks 100 --no-research                # against servers you started with `pacific serve`
+```
+
+- **Workload** (`pacific/sim/workload.py`): random database, code_run, security_audit, research and multi-step tasks, each with checks whose right answer is computed up front (row sums, program output, planted vulnerabilities). Budgets are drawn tight, normal or generous relative to an estimate, and some tasks delegate.
+- **Arrivals** are a Poisson process, assigned by each owner to a random agent, with at most `--concurrency` in flight. Everything is seeded.
+- **Faults** (`pacific/faults.py`) are injected into the platform services and agent host from `<home>/faults.json`, re-read on change. The rules cover latency, refusals, hangs past the exchange's provider timeout, and errors after the work was done. Profiles: `none`, `mild`, `harsh`, `chaos`. Change them on live servers with `pacific faults harsh`.
+- **Offline search**: `PACIFIC_SEARCH=offline` (or `pacific serve --offline-search`, the default for `--boot`) answers every upstream the search tiers scrape, in that API's own shape, from deterministic generated documents. The scrapers, ranking, readers and billing still run.
+- **Invariants** (`pacific/invariants.py`, `GET /v1/admin/invariants`) are polled throughout the run on one consistent snapshot:
+  - supply; no negative or overcommitted accounts
+  - job budgets; job and call books match the charges
+  - each delegation bill = fee + seller's spend at cost-plus
+  - every workspace has an owner
+  - no unhandled exchange errors
+  - with nothing in flight: no holds, pending calls or running tasks
+- **Report**: pass rate, latency p50/p95, spend, budget used, delegation depth, quotes, fumbles, retries, hires, quits and probes, broken down by persona, task kind and budget class. It also lists invariant violations, probe violations and crashes. Exit code 1 if any were found.
+
 ## Tests
 
 ```bash
-uv run pytest                          # ledger, pricing, a full economy booted on free ports, every sim persona
+uv run pytest                          # ledger, pricing, full economy, every sim persona, concurrent faulty traffic
 PACIFIC_NET_TESTS=1 uv run pytest      # also live search tiers + OSV audits
+PACIFIC_SOAK=500 uv run pytest tests/test_traffic.py -k soak -s   # long chaos run
 ```
 
 ## Known limits

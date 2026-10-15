@@ -152,6 +152,16 @@ class Database:
             else:
                 self._conn.execute("COMMIT")
 
+    @contextmanager
+    def snapshot(self):
+        """A read-only view that no write can interleave with."""
+        with self._lock:
+            self._conn.execute("BEGIN")
+            try:
+                yield self._conn
+            finally:
+                self._conn.execute("COMMIT")
+
     def one(self, sql: str, params=()) -> sqlite3.Row | None:
         with self._lock:
             return self._conn.execute(sql, params).fetchone()

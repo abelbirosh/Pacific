@@ -101,4 +101,7 @@ def test_unpriceable_requests_are_refused_not_crashed(economy):
         assert r.status_code == 400, (budget, r.text)
     r = post("/v1/call/ocean_db/execute_many", json={"db": "x", "sql": "SELECT 1", "rows": 5})
     assert r.status_code == 400, r.text
+    r = post("/v1/call/ocean_shield/scan_code", json={"files": {"a.py": True}})
+    assert r.status_code == 400, r.text
+    assert admin.get("/v1/admin/invariants").json()["ok"]
     assert admin.get("/v1/admin/audit").json()["active_holds"] == 0

@@ -77,29 +77,20 @@ def cmd_init(args, config: Config):
 
 
 def cmd_serve(args, config: Config):
-    import uvicorn
+    import os
 
-    from .agents.host import create_app as agents_app
-    from .exchange.app import create_app as exchange_app
-    from .services.app import create_app as services_app
+    from .server import build_apps, servers
 
-    secrets = config.secrets()
-    apps = [
-        ("exchange", exchange_app(config), config.exchange_port),
-        ("services", services_app(config.data_dir, secrets["gateway_secret"]), config.services_port),
-        ("agents", agents_app(config), config.agents_port),
-    ]
+    if args.offline_search:
+        os.environ["PACIFIC_SEARCH"] = "offline"
+    group = servers(config, args.log_level)
 
     async def main():
-        servers = [
-            uvicorn.Server(uvicorn.Config(app, host=config.host, port=port, log_level=args.log_level))
-            for _, app, port in apps
-        ]
-        for name, _, port in apps:
+        for name, _, port in build_apps(config):
             print(f"  {name:<9} http://{config.host}:{port}")
-        await asyncio.gather(*(s.serve() for s in servers))
+        await asyncio.gather(*(s.serve() for s in group))
 
-    print("Pacific is up:")
+    print("Pacific is up:" + ("  (offline search)" if args.offline_search else ""))
     asyncio.run(main())
 
 
@@ -116,6 +107,63 @@ def cmd_status(args, config: Config):
             cols = ["name", "owner", "balance", "held"] + (["skills"] if kind == "agent" else [])
             label = {"treasury": "treasury", "person": "people"}.get(kind, kind + "s")
             print(f"[{label}]\n{table(rows, cols)}\n")
+
+
+def cmd_faults(args, config: Config):
+    from .faults import PROFILES, write_faults
+
+    if args.profile not in PROFILES:
+        sys.exit(f"unknown profile {args.profile!r}; choose from {', '.join(PROFILES)}")
+    rules = write_faults(config.home, args.profile, seed=args.seed)
+    print(f"faults: {args.profile} ({len(rules)} rules) written to {config.home / 'faults.json'}")
+    for r in rules:
+        print(f"  {r}")
+
+
+def cmd_sim(args, config: Config):
+    import os
+    import tempfile
+
+    from .faults import write_faults
+    from .sim.traffic import TrafficConfig, format_report, run_traffic
+
+    cfg = TrafficConfig(tasks=args.tasks, duration_s=args.duration, rate=args.rate, concurrency=args.concurrency,
+                        seed=args.seed, think_scale=args.think_scale,
+                        personas=args.personas.split(",") if args.personas else None,
+                        research=not args.no_research)
+
+    def progress(r):
+        if not args.quiet:
+            print(f"  #{r.n:<4} {r.status:<9} {r.kind:<15} {r.persona:<12} {r.latency_s:7.2f}s {r.spent:8.3f} WD", flush=True)
+
+    def drive(econ: Config) -> dict:
+        write_faults(econ.home, args.faults, seed=args.seed)
+        try:
+            return asyncio.run(run_traffic(econ.exchange_url, econ.secrets(), cfg, progress))
+        finally:
+            write_faults(econ.home, "none")
+
+    if args.boot:
+        from .seed import genesis
+        from .server import free_port, running
+
+        if not args.online:
+            os.environ["PACIFIC_SEARCH"] = "offline"
+        os.environ.setdefault("PACIFIC_PLATFORM_TIMEOUT", "10")
+        econ = Config(home=Path(tempfile.mkdtemp(prefix="pacific-sim-")) / "home", exchange_port=free_port(),
+                      services_port=free_port(), agents_port=free_port())
+        genesis(econ, seed=args.seed, brain=args.brain)
+        print(f"Booted a fresh economy at {econ.home} ({args.brain} brains, faults: {args.faults})")
+        with running(econ):
+            report = drive(econ)
+    else:
+        report = drive(config)
+    print()
+    print(format_report(report))
+    if args.json:
+        Path(args.json).write_text(json.dumps(report, indent=2))
+        print(f"report written to {args.json}")
+    sys.exit(0 if report["ok"] else 1)
 
 
 def cmd_services(args, config: Config):
@@ -225,8 +273,32 @@ def main(argv: list[str] | None = None):
                    help='every agent\'s brain: "scripted", "sim" (a mix of personas) or "sim:<persona>"')
     s.set_defaults(fn=cmd_init)
 
+    s = sub.add_parser("sim", help="drive concurrent, realistic agent traffic and check the economy holds up")
+    s.add_argument("--boot", action="store_true", help="run against a fresh throwaway economy (offline search)")
+    s.add_argument("--brain", default="sim", help="with --boot: agents' brain (default: a mix of personas)")
+    s.add_argument("--online", action="store_true", help="with --boot: search the real internet")
+    s.add_argument("--tasks", type=int, default=50, help="tasks to send (0: run for --duration)")
+    s.add_argument("--duration", type=float, default=0, help="seconds to keep sending tasks")
+    s.add_argument("--rate", type=float, default=2.0, help="mean task arrivals per second")
+    s.add_argument("--concurrency", type=int, default=8, help="tasks in flight at once")
+    s.add_argument("--seed", type=int, default=1)
+    s.add_argument("--think-scale", type=float, default=0.0, help="persona thinking pauses (1 = realistic)")
+    s.add_argument("--personas", help="comma-separated personas to use for every task, instead of each agent's")
+    s.add_argument("--faults", default="mild", help="none | mild | harsh | chaos")
+    s.add_argument("--no-research", action="store_true", help="skip research tasks (servers without search)")
+    s.add_argument("--json", help="write the full report here")
+    s.add_argument("--quiet", action="store_true", help="don't print each task as it finishes")
+    s.set_defaults(fn=cmd_sim)
+
+    s = sub.add_parser("faults", help="set fault injection on running servers")
+    s.add_argument("profile", help="none | mild | harsh | chaos")
+    s.add_argument("--seed", type=int)
+    s.set_defaults(fn=cmd_faults)
+
     s = sub.add_parser("serve", help="run the exchange, platform services and agent host")
     s.add_argument("--log-level", default="warning")
+    s.add_argument("--offline-search", action="store_true",
+                   help="search tiers read a simulated web instead of the internet")
     s.set_defaults(fn=cmd_serve)
 
     sub.add_parser("status", help="supply, invariant and every balance").set_defaults(fn=cmd_status)
