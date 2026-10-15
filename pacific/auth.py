@@ -144,15 +144,16 @@ def dpop_proof(key: Ed25519PrivateKey, method: str, url, access_token: str | Non
 class Seen:
     """jti values seen within a time window, so nothing signed can be used twice."""
 
-    def __init__(self):
+    def __init__(self, prune_every_s: float = 10):
         self.until: dict[str, float] = {}
         self.lock = threading.Lock()
+        self.prune_every_s, self.pruned = prune_every_s, time.time()
 
     def first_time(self, jti: str, expires: float) -> bool:
         now = time.time()
         with self.lock:
-            if len(self.until) > 10_000:
-                self.until = {j: t for j, t in self.until.items() if t > now}
+            if now - self.pruned > self.prune_every_s:  # sweep expired entries now and then, not per insert
+                self.until, self.pruned = {j: t for j, t in self.until.items() if t > now}, now
             if self.until.get(jti, 0) > now:
                 return False
             self.until[jti] = expires
