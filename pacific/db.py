@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     output      TEXT,
     trace       TEXT,
     checks      TEXT,
+    artifacts   TEXT,                      -- what the brain chose to report (JSON)
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     finished_at TEXT
 );
@@ -131,6 +132,13 @@ class Database:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self):
+        """Add columns introduced after a ledger was created."""
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(tasks)")}
+        if "artifacts" not in cols:
+            self._conn.execute("ALTER TABLE tasks ADD COLUMN artifacts TEXT")
 
     @contextmanager
     def tx(self):
@@ -142,6 +150,16 @@ class Database:
                 self._conn.execute("ROLLBACK")
                 raise
             else:
+                self._conn.execute("COMMIT")
+
+    @contextmanager
+    def snapshot(self):
+        """A read-only view that no write can interleave with."""
+        with self._lock:
+            self._conn.execute("BEGIN")
+            try:
+                yield self._conn
+            finally:
                 self._conn.execute("COMMIT")
 
     def one(self, sql: str, params=()) -> sqlite3.Row | None:

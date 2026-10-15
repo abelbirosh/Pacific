@@ -73,5 +73,13 @@ class ExchangeClient:
         return Receipt(data["call_id"], service, endpoint, data["cost"]["wd"], data.get("result"),
                        data.get("error"), data.get("job"), data)
 
+    def transfer(self, to: str, amount: float, memo: str = "") -> dict:
+        """Pay another account from this wallet (not from the job budget)."""
+        return self._check(self._http.post("/v1/transfer", json={"to": to, "amount": amount, "memo": memo}))
+
+    def raw(self, method: str, path: str, **kw) -> httpx.Response:
+        """Unchecked request, for probing how the exchange handles bad input."""
+        return self._http.request(method, path, **kw)
+
     def close(self):
         self._http.close()
