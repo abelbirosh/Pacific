@@ -23,12 +23,15 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel, Field
 
 from ..config import Config
-from .. import invariants
+from .. import invariants, ratelimit
 from ..db import Database
+from ..errors import CODES, PacificError, body as error_body, code_for
 from ..grants import Signer
 from ..ids import new_id
 from ..ledger import Ledger, LedgerError
@@ -36,8 +39,13 @@ from ..money import fmt, to_micro, to_wd
 from ..registry import Registry, register_agent_offering
 from .checks import CheckContext, run_checks
 
+PROTOCOL_VERSION = "0.1"
 PLATFORM_TIMEOUT = 120
 DELEGATION_TIMEOUT = 900
+
+
+def jsonable_errors(exc: RequestValidationError) -> list[dict]:
+    return [{k: v for k, v in e.items() if k in ("loc", "msg", "type")} for e in exc.errors()]
 
 
 def create_app(config: Config, db: Database | None = None) -> FastAPI:
@@ -58,9 +66,20 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
 
     app = FastAPI(title="Pacific exchange", lifespan=lifespan)
 
+    # Every refusal carries a machine-readable `error` code (see errors.py).
     @app.exception_handler(LedgerError)
     async def ledger_error(_, exc: LedgerError):
-        return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
+        return JSONResponse(error_body(exc.code, str(exc)), status_code=exc.status_code)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(_, exc: StarletteHTTPException):
+        code = getattr(exc, "code", None) or code_for(exc.status_code)
+        return JSONResponse(error_body(code, exc.detail, **getattr(exc, "extra", {})), status_code=exc.status_code,
+                            headers=getattr(exc, "headers", None))
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_body(_, exc: RequestValidationError):
+        return JSONResponse(error_body("invalid_request", jsonable_errors(exc)), status_code=422)
 
     # The exchange should refuse bad input, never fall over on it. Unhandled exceptions are kept
     # (most recent 100) and reported by /v1/admin/invariants.
@@ -70,7 +89,31 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
     async def unhandled_error(request: Request, exc: Exception):
         unhandled.append({"path": request.url.path, "error": f"{type(exc).__name__}: {exc}"[:300]})
         del unhandled[:-100]
-        return JSONResponse({"detail": "internal error"}, status_code=500)
+        return JSONResponse(error_body("internal_error", "internal error"), status_code=500)
+
+    rate, burst = ratelimit.limits_from_env()
+    ratelimit.install(app, secrets["admin_key"], rate, burst)
+
+    # ---- discovery ----------------------------------------------------------------------------
+
+    @app.get("/.well-known/pacific.json")
+    def discovery():
+        """What an agent needs to work with this exchange (inspired by PAP's poppy.json)."""
+        return {
+            "protocol_version": PROTOCOL_VERSION,
+            "organization": {"name": "Pacific Exchange", "url": config.exchange_url},
+            "auth": {"schemes": ["bearer"]},
+            "endpoints": {
+                "me": "/v1/me", "services": "/v1/services", "quote": "/v1/quote/{service}/{endpoint}",
+                "call": "/v1/call/{service}/{endpoint}", "jobs": "/v1/jobs/{job_id}", "transfer": "/v1/transfer",
+                "offer": "/v1/services", "tasks": "/v1/tasks", "run_task": "/v1/tasks/{task_id}/run",
+            },
+            "apis": [{"type": "openapi", "url": "/openapi.json", "description": "The exchange's full HTTP API"}],
+            "headers": {"job": "X-Pacific-Job", "max_cost": "X-Pacific-Max-Cost"},
+            "errors": {code: {"status": status, "meaning": meaning} for code, (status, meaning) in CODES.items()},
+            "rate_limits": {"per_s": rate, "burst": burst} if rate > 0 else None,
+            "extensions": {},
+        }
 
     # ---- auth -------------------------------------------------------------------------------
 
@@ -143,7 +186,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         try:
             return plan.max_cost(body)
         except Exception as e:  # malformed input in a field the plan measures
-            raise HTTPException(400, f"can't price this request: {type(e).__name__}: {e}")
+            raise PacificError("unpriceable", f"can't price this request: {type(e).__name__}: {e}")
 
     @app.post("/v1/quote/{service}/{endpoint}")
     async def quote(service: str, endpoint: str, request: Request):
@@ -220,7 +263,8 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
 
         hold_amount = _price(plan, body)
         if x_pacific_max_cost is not None and hold_amount > to_micro(x_pacific_max_cost):
-            raise HTTPException(402, f"worst-case cost {fmt(hold_amount)} exceeds your max {x_pacific_max_cost} WD")
+            raise PacificError("max_cost_exceeded",
+                               f"worst-case cost {fmt(hold_amount)} exceeds your max {x_pacific_max_cost} WD")
 
         call_id = new_id("call")
         with db.tx() as conn:
@@ -293,7 +337,10 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
             "job": _job_brief(x_pacific_job),
         }
         if status != "ok" and svc["kind"] == "platform":
-            return JSONResponse({**receipt, "detail": error}, status_code=http_status if http_status >= 400 else 502)
+            http_status = http_status if http_status >= 400 else 502
+            # A provider's 5xx is the provider failing, never the exchange (internal_error is ours).
+            code = "provider_failed" if http_status >= 500 else code_for(http_status)
+            return JSONResponse({**receipt, "error": code, "detail": error}, status_code=http_status)
         return {**receipt, "result": payload, "error": error}
 
     def _job_brief(job_id: str | None) -> dict | None:
@@ -348,7 +395,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                                    headers=signer.headers(path, raw, ws=task["job_id"], call=task_id))
             result = resp.json() if resp.is_success else {"status": "error", "output": resp.text}
         except httpx.HTTPError as e:
-            result = {"status": "error", "output": f"agent host unreachable: {e}"}
+            result = {"status": "error", "output": f"agent host unreachable: {type(e).__name__}: {e}"}
         with db.tx() as conn:
             conn.execute("UPDATE jobs SET status='closed' WHERE id=?", (task["job_id"],))
 

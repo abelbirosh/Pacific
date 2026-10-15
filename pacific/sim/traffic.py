@@ -77,13 +77,22 @@ async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, prog
             rec.queued_s = time.monotonic() - arrived
             t0 = time.monotonic()
             auth = {"Authorization": f"Bearer {owner_key[spec['agent']]}"}
+
+            async def post(path: str, **kw) -> httpx.Response:
+                for _ in range(6):  # owners honour rate limits too
+                    r = await http.post(path, headers=auth, **kw)
+                    if r.status_code != 429:
+                        return r
+                    await asyncio.sleep(min(10.0, float(r.headers.get("Retry-After", 1))))
+                return r
+
             try:
-                created = await http.post("/v1/tasks", json=spec, headers=auth)
+                created = await post("/v1/tasks", json=spec)
                 if created.status_code != 200:
                     rec.status, rec.error = f"http_{created.status_code}", created.text[:300]
                     return
                 rec.id = created.json()["id"]
-                ran = await http.post(f"/v1/tasks/{rec.id}/run", headers=auth)
+                ran = await post(f"/v1/tasks/{rec.id}/run")
                 if ran.status_code != 200:
                     rec.status, rec.error = f"http_{ran.status_code}", ran.text[:300]
                     return
@@ -180,6 +189,7 @@ def _group(records: list[TaskRecord]) -> dict:
         "hires": sum(s.get("hires", 0) for s in sims),
         "gave_up": sum(bool(s.get("gave_up")) for s in sims),
         "probes": sum(len(s.get("probes", [])) for s in sims),
+        "rate_limited": sum(s.get("errors", {}).get("rate_limited", 0) for s in sims),
     }
 
 
@@ -203,6 +213,7 @@ def summarize(records: list[TaskRecord], violations: list[dict], wall: float, cf
         "invariant_violations": violations,
         "probe_violations": probe_violations,
         "probes_run": dict(sorted(probes_run.items())),
+        "error_codes": dict(sum((Counter(r.sim.get("errors", {})) for r in records), Counter()).most_common()),
         "probe_refusals_with_other_status": dict(unexpected),
         "crashes": crashed[:20],
         "crash_count": len(crashed),
@@ -228,11 +239,12 @@ def _bucket(records, key):
 
 
 def format_report(rep: dict) -> str:
-    cols = ["n", "pass", "p50 s", "p95 s", "spend", "used", "depth", "quote", "fumbl", "retry", "hires", "quit", "probe"]
+    cols = ["n", "pass", "p50 s", "p95 s", "spend", "used", "depth", "quote", "fumbl", "retry", "429", "hires", "quit",
+            "probe"]
     row = lambda name, g: [name, str(g["n"]), "-" if g["pass_rate"] is None else f"{g['pass_rate']:.0%}",
                            f"{g['latency_p50_s']:.2f}", f"{g['latency_p95_s']:.2f}", f"{g['mean_spend']:.2f}",
                            f"{g['budget_used']:.0%}", str(g["max_depth"]), str(g["quotes"]), str(g["fumbles"]),
-                           str(g["retries"]), str(g["hires"]), str(g["gave_up"]), str(g["probes"])]
+                           str(g["retries"]), str(g["rate_limited"]), str(g["hires"]), str(g["gave_up"]), str(g["probes"])]
 
     def table(title, groups):
         rows = [row(k, g) for k, g in groups.items()]
@@ -249,6 +261,7 @@ def format_report(rep: dict) -> str:
         table("persona", rep["by_persona"]), "",
         table("kind", rep["by_kind"]), "",
         table("budget", rep["by_budget"]), "",
+        f"refusals seen by agents (incl. retried): {rep['error_codes'] or 'none'}",
     ]
     if rep["invariant_violations"]:
         out.append(f"INVARIANT VIOLATIONS ({len(rep['invariant_violations'])}):")

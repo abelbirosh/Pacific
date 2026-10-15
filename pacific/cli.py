@@ -94,6 +94,14 @@ def cmd_serve(args, config: Config):
     asyncio.run(main())
 
 
+def cmd_discover(args, config: Config):
+    try:
+        doc = httpx.get(f"{config.exchange_url}/.well-known/pacific.json", timeout=10).json()
+    except httpx.ConnectError:
+        sys.exit(f"Can't reach the exchange at {config.exchange_url}. Start it with `pacific serve`.")
+    print(json.dumps(doc, indent=2))
+
+
 def cmd_status(args, config: Config):
     api = Api(config)
     audit = api("GET", "/v1/admin/audit")
@@ -302,6 +310,7 @@ def main(argv: list[str] | None = None):
     s.set_defaults(fn=cmd_serve)
 
     sub.add_parser("status", help="supply, invariant and every balance").set_defaults(fn=cmd_status)
+    sub.add_parser("discover", help="print the exchange's discovery document").set_defaults(fn=cmd_discover)
 
     s = sub.add_parser("services", help="the marketplace catalog with price plans")
     s.add_argument("--kind", choices=["platform", "agent"])
