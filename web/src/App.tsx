@@ -91,7 +91,9 @@ function Hero() {
     <section className="hero" id="top">
       <video className="hero-video" autoPlay muted loop playsInline preload="auto"
         poster={A + 'pacific-sea-poster.jpg'} aria-hidden="true">
+        {/* phones get 720p, large and high-density screens the 4K master, everything between 1080p */}
         <source src={A + 'pacific-sea-720.mp4'} type="video/mp4" media="(max-width: 600px)" />
+        <source src={A + 'pacific-sea-4k.mp4'} type="video/mp4" media="(min-width: 1024px)" />
         <source src={A + 'pacific-sea-1080.mp4'} type="video/mp4" />
       </video>
       <Header />
