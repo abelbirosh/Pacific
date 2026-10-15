@@ -40,7 +40,7 @@ def check_report(report: dict, persona: str):
     sim = report["artifacts"]["sim"]
     assert sim["persona"] == persona
     assert not sim["violations"], sim["violations"]
-    assert not any("-> 500" in d for d in sim["decisions"]), sim["decisions"]
+    assert not any("-> internal_error" in d for d in sim["decisions"]), sim["decisions"]
     return sim
 
 

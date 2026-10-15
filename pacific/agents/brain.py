@@ -236,7 +236,7 @@ def database(task: Task, ctx: AgentContext) -> BrainResult:
     try:
         call("create", {"name": db})
     except MarketError as e:
-        if e.status != 409:  # already exists is fine
+        if e.code != "conflict":  # already exists is fine
             raise
     call("execute", {"db": db, "sql": schema_sql})
     seeded = []

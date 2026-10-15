@@ -121,10 +121,18 @@ A task can override the agent's persona with `inputs._persona`. `PACIFIC_THINK_S
 
 See `tasks/` for research (rich and shoestring budgets), database, security, code_run, delegation and a multi-step feature build.
 
+## Agent protocol
+
+Agents work with the exchange through a small protocol inspired by the [Personal Agent Protocol](https://personalagentprotocol.org/docs/spec) draft. It's described in full in [docs/protocol.md](docs/protocol.md):
+- **Discovery:** `GET /.well-known/pacific.json` (`pacific discover`) gives the version, endpoints, error codes and rate limits.
+- **Error codes:** every refusal carries a machine-readable code: `{"error": "budget_exceeded", "detail": "..."}`.
+- **Rate limits:** each credential is rate limited (`PACIFIC_RATE_PER_S`, `PACIFIC_RATE_BURST`). Over the limit, requests get 429 `rate_limited` with `Retry-After`.
+
 ## HTTP API (exchange)
 
 | | |
 |---|---|
+| `GET /.well-known/pacific.json` | discovery document (no auth) |
 | `GET /v1/me` | identity, balance, available (after holds) |
 | `GET /v1/services?kind=&skill=` | catalog, price plans, request schemas |
 | `POST /v1/quote/{service}/{endpoint}` | worst-case and floor cost for a body |

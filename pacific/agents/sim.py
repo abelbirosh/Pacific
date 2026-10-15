@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
@@ -46,6 +47,7 @@ class SimStats:
     fumbles: int = 0
     retries: int = 0
     guard_402s: int = 0
+    errors: dict[str, int] = field(default_factory=dict)  # refusal codes seen, retries included
     hires: int = 0
     tips: float = 0.0
     gave_up: bool = False
@@ -97,7 +99,7 @@ class PersonaTools:
         try:
             return self._attempt(name, args)
         except MarketError as e:
-            if e.status == 402 and "max_cost" in args and "exceeds your max" in str(e.detail):
+            if e.code == "max_cost_exceeded" and "max_cost" in args:
                 # Guarded too tightly; a real agent reads the error and tries again unguarded.
                 self.stats.guard_402s += 1
                 return self._attempt(name, {k: v for k, v in args.items() if k != "max_cost"})
@@ -111,16 +113,21 @@ class PersonaTools:
     def _attempt(self, name: str, args: dict):
         for i in range(self.p.retries + 1):
             last = i == self.p.retries
+            wait = min(2.0, 0.05 * 2 ** i) * (0.5 + self.rng.random())
             try:
                 return self.inner.call(name, **args)
             except MarketError as e:
+                self.stats.errors[e.code] = self.stats.errors.get(e.code, 0) + 1
                 if e.status not in TRANSIENT or last:
                     raise
+                # A sloppy agent ignores Retry-After half the time and comes straight back.
+                if e.code == "rate_limited" and e.retry_after and self.rng.random() >= self.p.sloppy:
+                    wait = min(10.0, e.retry_after)
             except httpx.TransportError as e:
                 if last:
                     raise MarketError(503, f"transport error: {type(e).__name__}: {e}") from e
             self.stats.retries += 1
-            time.sleep(min(2.0, 0.05 * 2 ** i) * (0.5 + self.rng.random()))
+            time.sleep(wait)
 
     def _fumble(self, args: dict):
         """Send a malformed version of the call first, the way a model gets an argument wrong."""
@@ -139,7 +146,8 @@ class PersonaTools:
             self.inner.call("call_service", service=service, endpoint=endpoint, args=body)
             self.stats.decisions.append(f"fumble ({kind}) on {args['service']}/{args['endpoint']} went through")
         except MarketError as e:
-            self.stats.decisions.append(f"fumble ({kind}) on {args['service']}/{args['endpoint']} -> {e.status}")
+            self.stats.errors[e.code] = self.stats.errors.get(e.code, 0) + 1
+            self.stats.decisions.append(f"fumble ({kind}) on {args['service']}/{args['endpoint']} -> {e.code}")
         except httpx.TransportError as e:
             self.stats.decisions.append(f"fumble ({kind}) on {args['service']}/{args['endpoint']} -> {type(e).__name__}")
 
@@ -275,6 +283,7 @@ class SimBrain(ScriptedBrain):
     def _browse(self, ctx: AgentContext):
         if self.rng.random() >= self.persona.browse:
             return
+        ctx.tools.call("discover")
         ctx.tools.call("list_services", kind=self.rng.choice([None, "platform", "agent"]))
         ctx.tools.call("budget_status")
         if self.rng.random() < 0.5:
@@ -294,9 +303,10 @@ class SimBrain(ScriptedBrain):
 class Probes:
     """Things an adversarial agent tries. Each must be refused and must not move the job's spend.
 
-    A refusal with a different status than expected (say 402 because the hold was checked before
-    the input, or an upstream 503) is recorded as `unexpected` but is not a violation. A violation
-    is a probe the exchange accepted, charged for, or crashed on. The sandbox escape is a paid
+    Expectations are error codes (see pacific/errors.py). A refusal with a different code than
+    expected (say `budget_exceeded` because the hold was checked before the input, or an upstream
+    `provider_failed`) is recorded as `unexpected` but is not a violation. A violation is a probe
+    the exchange accepted, charged for, or crashed on. The sandbox escape is a paid
     call that is meant to run; its violation is the program getting out."""
 
     def __init__(self, ctx: AgentContext, rng: random.Random, stats: SimStats):
@@ -310,42 +320,47 @@ class Probes:
         others = [s for s in agents if s["provider_id"] != self.ctx.agent_id]
         other = self.rng.choice(others) if others else None
         hire = lambda svc, body: lambda: self._post(f"/v1/call/{svc['name']}/delegate", json=body)
+        traversal = {"invalid_request", "budget_exceeded", "insufficient_funds"}
         probes = [
-            ("max_cost_exceeded", {402}, lambda: self._post("/v1/call/ocean_storage/list", json={},
-                                                            headers={"X-Pacific-Max-Cost": "0.000001"})),
-            ("unknown_endpoint", {404}, lambda: self._post("/v1/call/ocean_storage/teleport", json={})),
-            ("malformed_body", {400}, lambda: self._post("/v1/call/ocean_storage/list", content=b"{not json")),
-            ("storage_traversal", {400}, lambda: self._post("/v1/call/ocean_storage/get", json={"key": "../../../secrets.json"})),
-            ("db_traversal", {400}, lambda: self._post("/v1/call/ocean_db/create", json={"name": "../escape"})),
-            ("foreign_job", {400, 403, 404}, lambda: self._post(
+            ("max_cost_exceeded", {"max_cost_exceeded"}, lambda: self._post(
+                "/v1/call/ocean_storage/list", json={}, headers={"X-Pacific-Max-Cost": "0.000001"})),
+            ("unknown_endpoint", {"not_found"}, lambda: self._post("/v1/call/ocean_storage/teleport", json={})),
+            ("malformed_body", {"invalid_request"}, lambda: self._post("/v1/call/ocean_storage/list", content=b"{not json")),
+            ("storage_traversal", traversal, lambda: self._post("/v1/call/ocean_storage/get",
+                                                                json={"key": "../../../secrets.json"})),
+            ("db_traversal", traversal, lambda: self._post("/v1/call/ocean_db/create", json={"name": "../escape"})),
+            ("foreign_job", {"not_found", "forbidden"}, lambda: self._post(
                 "/v1/call/ocean_storage/list", json={}, headers={"X-Pacific-Job": f"job_{self.rng.randrange(16**12):012x}"})),
-            ("admin_audit", {403}, lambda: self.client.raw("GET", "/v1/admin/audit")),
-            ("admin_mint", {403}, lambda: self.client.raw("POST", "/v1/admin/mint",
-                                                          json={"to": self.ctx.agent_id, "amount": 1000})),
-            ("negative_transfer", {422}, lambda: self.client.raw("POST", "/v1/transfer", json={"to": "treasury", "amount": -5})),
-            ("overdraw_transfer", {402}, lambda: self.client.raw("POST", "/v1/transfer",
-                                                                 json={"to": other["provider_id"] if other else "treasury",
-                                                                       "amount": 10**9})),
+            ("admin_audit", {"forbidden"}, lambda: self.client.raw("GET", "/v1/admin/audit")),
+            ("admin_mint", {"forbidden"}, lambda: self.client.raw("POST", "/v1/admin/mint",
+                                                                  json={"to": self.ctx.agent_id, "amount": 1000})),
+            ("negative_transfer", {"invalid_request"}, lambda: self.client.raw("POST", "/v1/transfer",
+                                                                               json={"to": "treasury", "amount": -5})),
+            ("overdraw_transfer", {"insufficient_funds"}, lambda: self.client.raw(
+                "POST", "/v1/transfer", json={"to": other["provider_id"] if other else "treasury", "amount": 10**9})),
         ]
+        if self.client.discovery().get("rate_limits"):
+            probes.append(("flood", None, self._flood))
         if mine:
-            probes.append(("self_dealing", {400}, hire(mine[0], {"description": "x", "budget": 1})))
+            probes.append(("self_dealing", {"invalid_request"}, hire(mine[0], {"description": "x", "budget": 1})))
         if other:
             probes += [
-                ("negative_budget_hire", {400}, hire(other, {"description": "x", "budget": -5})),
-                ("infinite_budget_hire", {400, 402, 422}, lambda: self._post(
+                ("negative_budget_hire", {"invalid_request"}, hire(other, {"description": "x", "budget": -5})),
+                ("infinite_budget_hire", {"invalid_request", "unpriceable"}, lambda: self._post(
                     f"/v1/call/{other['name']}/delegate", content=b'{"description": "x", "budget": 1e999}',
                     headers={"Content-Type": "application/json"})),
-                ("over_budget_hire", {402}, hire(other, {"description": "x", "budget": self.ctx.remaining() * 10 + 100})),
-                ("assign_task_to_others", {403}, lambda: self.client.raw("POST", "/v1/tasks", json={
+                ("over_budget_hire", {"budget_exceeded", "insufficient_funds"}, hire(
+                    other, {"description": "x", "budget": self.ctx.remaining() * 10 + 100})),
+                ("assign_task_to_others", {"forbidden"}, lambda: self.client.raw("POST", "/v1/tasks", json={
                     "agent": other["provider_id"], "title": "x", "description": "x", "budget": 1})),
             ]
         if self.job:
             parent = (self.client.job() or {}).get("parent_job_id")
             if parent:
                 probes += [
-                    ("spend_parent_job", {403}, lambda: self._post("/v1/call/ocean_storage/list", json={},
-                                                                   headers={"X-Pacific-Job": parent})),
-                    ("read_parent_job", {403}, lambda: self.client.raw("GET", f"/v1/jobs/{parent}")),
+                    ("spend_parent_job", {"forbidden"}, lambda: self._post("/v1/call/ocean_storage/list", json={},
+                                                                           headers={"X-Pacific-Job": parent})),
+                    ("read_parent_job", {"forbidden"}, lambda: self.client.raw("GET", f"/v1/jobs/{parent}")),
                 ]
             if self.ctx.remaining() > 2:
                 probes.append(("sandbox_escape", None, self._sandbox_escape))
@@ -353,29 +368,65 @@ class Probes:
             if self.rng.random() < rate:
                 self._run(name, expected, fn)
 
+    def _flood(self):
+        """Hammer a free endpoint from 16 threads, well past the advertised burst. The exchange
+        must never accept more than burst + rate x elapsed (a busy exchange may serve slower than
+        the limit, in which case nothing needs refusing), and must not fall over."""
+        limits = self.client.discovery()["rate_limits"]
+        t0 = time.monotonic()
+        with ThreadPoolExecutor(16) as pool:
+            responses = list(pool.map(lambda _: self.client.raw("GET", "/v1/me"), range(int(limits["burst"] * 1.5) + 50)))
+        elapsed = time.monotonic() - t0
+        accepted = sum(r.status_code == 200 for r in responses)
+        limited = [r for r in responses if r.status_code == 429]
+        bound = limits["burst"] + limits["per_s"] * elapsed + 5
+        crashed = any(r.status_code >= 500 for r in responses)
+        if limited:  # back off as told, so the rest of the task isn't refused too
+            time.sleep(min(10.0, float(limited[0].headers.get("Retry-After", 1))))
+        r = limited[0] if limited else responses[-1]
+        return r, {"ok": accepted <= bound and not crashed and all(_code(x) == "rate_limited" for x in limited),
+                   "detail": f"{accepted} accepted, {len(limited)} limited in {elapsed:.2f}s (allowed {bound:.0f})"}
+
     def _post(self, path: str, headers: dict | None = None, **kw) -> httpx.Response:
         h = {"X-Pacific-Job": self.job} if self.job else {}
         return self.client.raw("POST", path, headers={**h, **(headers or {})}, **kw)
 
     def _spent(self) -> float:
-        return self.client.job()["spent"]["wd"] if self.job else 0.0
+        if not self.job:
+            return 0.0
+        for _ in range(3):
+            try:
+                return self.client.job()["spent"]["wd"]
+            except MarketError as e:
+                if e.code != "rate_limited":
+                    raise
+                time.sleep(min(10.0, e.retry_after or 1))
+        return self.client.job()["spent"]["wd"]
 
     def _run(self, name: str, expected: set[int] | None, fn):
         try:
             before = self._spent()
             r, extra = fn() if expected is None else (fn(), {})
             charged = round(self._spent() - before, 6)
-        except (httpx.HTTPError, MarketError) as e:
+        except MarketError as e:
+            if e.code == "rate_limited":  # our own bookkeeping was throttled: no verdict either way
+                self.stats.probes.append({"probe": name, "skipped": "rate_limited", "ok": True, "status": 429})
+                return
             self.stats.probes.append({"probe": name, "expected": sorted(expected or []), "status": 0,
                                       "ok": False, "charged": 0.0, "detail": f"{type(e).__name__}: {e}"})
             return
-        if expected is None:  # a paid probe: the response body says whether it got out
+        except httpx.HTTPError as e:
+            self.stats.probes.append({"probe": name, "expected": sorted(expected or []), "status": 0,
+                                      "ok": False, "charged": 0.0, "detail": f"{type(e).__name__}: {e}"})
+            return
+        if expected is None:  # a probe that judges its own outcome (sandbox escape, flood)
             entry = {"probe": name, "expected": [], "status": r.status_code, "charged": charged, **extra}
         else:
-            crashed = r.status_code >= 500 and not _is_json(r)  # the exchange itself fell over
-            entry = {"probe": name, "expected": sorted(expected), "status": r.status_code, "charged": charged,
-                     "ok": r.status_code >= 400 and not crashed and charged == 0,
-                     "unexpected": r.status_code not in expected}
+            code = _code(r)
+            crashed = code == "internal_error" or (r.status_code >= 500 and code is None)  # the exchange fell over
+            entry = {"probe": name, "expected": sorted(expected), "status": r.status_code, "code": code,
+                     "charged": charged, "ok": r.status_code >= 400 and not crashed and charged == 0,
+                     "unexpected": code not in expected}
             if not entry["ok"] or entry["unexpected"]:
                 entry["detail"] = r.text[:300]
         self.stats.probes.append(entry)
@@ -413,9 +464,9 @@ class Probes:
         return r, {"ok": not leaks, "detail": "; ".join(leaks) or stdout.strip()[:80]}
 
 
-def _is_json(r: httpx.Response) -> bool:
+def _code(r: httpx.Response) -> str | None:
     try:
-        r.json()
-        return True
+        data = r.json()
     except ValueError:
-        return False
+        return None
+    return data.get("error") if isinstance(data, dict) else None

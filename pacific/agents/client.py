@@ -6,15 +6,24 @@ from dataclasses import dataclass
 
 import httpx
 
+from ..errors import code_for
+
+PROTOCOL_MAJOR = "0"
+_discovered: dict[str, dict] = {}  # base URL -> discovery document, fetched once per process
+
 
 class MarketError(Exception):
-    def __init__(self, status: int, detail, receipt: dict | None = None):
-        super().__init__(f"[{status}] {detail}")
-        self.status, self.detail, self.receipt = status, detail, receipt or {}
+    """A refusal or failure from the exchange. Branch on `code` (see pacific/errors.py)."""
+
+    def __init__(self, status: int, detail, receipt: dict | None = None, code: str | None = None,
+                 retry_after: float | None = None):
+        self.code = code or code_for(status)
+        super().__init__(f"[{status} {self.code}] {detail}")
+        self.status, self.detail, self.receipt, self.retry_after = status, detail, receipt or {}, retry_after
 
     @property
     def cannot_afford(self) -> bool:
-        return self.status == 402
+        return self.code in ("insufficient_funds", "budget_exceeded", "max_cost_exceeded")
 
 
 @dataclass
@@ -45,8 +54,20 @@ class ExchangeClient:
         except ValueError:
             data = {"detail": resp.text}
         if not resp.is_success:
-            raise MarketError(resp.status_code, data.get("detail", data), data)
+            retry_after = resp.headers.get("Retry-After")
+            raise MarketError(resp.status_code, data.get("detail", data), data, code=data.get("error"),
+                              retry_after=float(retry_after) if retry_after else None)
         return data
+
+    def discovery(self) -> dict:
+        """The exchange's /.well-known/pacific.json, fetched once per process."""
+        key = str(self.base_url)
+        if key not in _discovered:
+            doc = self._check(self._http.get("/.well-known/pacific.json"))
+            if str(doc.get("protocol_version", "")).split(".")[0] != PROTOCOL_MAJOR:
+                raise MarketError(400, f"unsupported protocol version {doc.get('protocol_version')!r}")
+            _discovered[key] = doc
+        return _discovered[key]
 
     def me(self) -> dict:
         return self._check(self._http.get("/v1/me"))

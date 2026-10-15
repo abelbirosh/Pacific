@@ -16,15 +16,19 @@ from .money import fmt
 
 
 class LedgerError(Exception):
-    status_code = 400
+    status_code, code = 400, "invalid_request"
 
 
 class InsufficientFunds(LedgerError):
-    status_code = 402
+    status_code, code = 402, "insufficient_funds"
 
 
 class BudgetExceeded(LedgerError):
-    status_code = 402
+    status_code, code = 402, "budget_exceeded"
+
+
+class NotFound(LedgerError):
+    status_code, code = 404, "not_found"
 
 
 class Ledger:
@@ -197,7 +201,7 @@ class Ledger:
     def job_remaining(conn: sqlite3.Connection, job_id: str) -> int:
         job = conn.execute("SELECT budget, spent, status FROM jobs WHERE id = ?", (job_id,)).fetchone()
         if job is None:
-            raise LedgerError(f"unknown job {job_id}")
+            raise NotFound(f"unknown job {job_id}")
         if job["status"] != "open":
             raise BudgetExceeded(f"job {job_id} is closed")
         held = conn.execute(
@@ -208,7 +212,7 @@ class Ledger:
     def job_status(self, job_id: str) -> dict:
         job = self.db.one("SELECT * FROM jobs WHERE id = ?", (job_id,))
         if job is None:
-            raise LedgerError(f"unknown job {job_id}")
+            raise NotFound(f"unknown job {job_id}")
         held = self.db.one(
             "SELECT COALESCE(SUM(amount), 0) AS h FROM holds WHERE job_id = ? AND status = 'active'", (job_id,)
         )["h"]

@@ -7,6 +7,8 @@ scripted brain calls the same tools by name. Each invocation is recorded in the 
 from __future__ import annotations
 
 import json
+import os
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -94,6 +96,10 @@ class Toolbox:
         obj = lambda props, req=(): {"type": "object", "properties": props, "required": list(req)}
 
         self.register(Tool(
+            "discover", "The exchange's discovery document: protocol version, endpoints, error codes, "
+            "rate limits (free).", obj({}), lambda: c.discovery(),
+        ))
+        self.register(Tool(
             "budget_status", "How many wave dollars this job has left to spend (free).", obj({}),
             lambda: c.job() or c.me(),
         ))
@@ -152,12 +158,29 @@ class Toolbox:
         return json.loads(self.notes_path.read_text()) if self.notes_path.exists() else {}
 
     def _notes_write(self, key: str, text: str) -> str:
+        # Several tasks for the same agent run at once: serialise the read-modify-write per file,
+        # and replace the file atomically so a reader never sees half of it.
+        with _notes_lock(self.notes_path):
+            return self._notes_write_locked(key, text)
+
+    def _notes_write_locked(self, key: str, text: str) -> str:
         notes = self._notes()
         notes[key] = text
         self.notes_path.parent.mkdir(parents=True, exist_ok=True)
-        self.notes_path.write_text(json.dumps(notes, indent=2))
+        tmp = self.notes_path.with_name(f".{self.notes_path.name}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(notes, indent=2))
+        os.replace(tmp, self.notes_path)
         return f"saved note {key!r}"
 
     def _notes_read(self, key: str | None = None):
         notes = self._notes()
         return notes.get(key) if key else sorted(notes)
+
+
+_notes_locks: dict[Path, threading.Lock] = {}
+_notes_locks_guard = threading.Lock()
+
+
+def _notes_lock(path: Path) -> threading.Lock:
+    with _notes_locks_guard:
+        return _notes_locks.setdefault(path, threading.Lock())
