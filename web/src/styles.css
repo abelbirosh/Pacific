@@ -72,16 +72,17 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
   /* the bottom padding matches the header so the title sits on the true centre of the screen */
   padding: 0 var(--margin) 4.5rem; background: var(--sea);
 }
-.hero-video { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; }
-/* a neutral scrim under the type: the bar at the top, a light veil behind the centred title,
-   and at the foot the water sinks into the board's own colour so the first edge below is as fine as the rest */
+.hero-video { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; }
+/* over the video: a translucent wash of the water's own blue so the type reads while the waves stay sharp,
+   a little extra shade behind the bar, and at the foot the water sinks into the board's colour */
 .hero::before {
-  content: ''; position: absolute; inset: 0; pointer-events: none;
+  content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none;
   background:
     linear-gradient(0deg, var(--sea), rgb(14 23 29 / 0.85) 7%, rgb(14 23 29 / 0) 30%),
-    linear-gradient(180deg, rgb(0 0 0 / 0.42), rgb(0 0 0 / 0.3) 22%, rgb(0 0 0 / 0.3) 70%, rgb(0 0 0 / 0));
+    linear-gradient(180deg, rgb(0 0 0 / 0.25), rgb(0 0 0 / 0) 18%);
+  background-color: rgb(30 52 70 / 0.55);
 }
-.hero > .header, .hero-copy { position: relative; z-index: 1; }
+.hero > .header, .hero-copy { position: relative; z-index: 2; }
 
 .header { display: flex; align-items: center; gap: clamp(1rem, 3vw, 2.5rem); padding: 1.25rem 0; }
 .wordmark { font-size: 1.375rem; font-weight: 600; letter-spacing: -0.04em; text-decoration: none; }
