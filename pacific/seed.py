@@ -7,7 +7,8 @@ import random
 import secrets as pysecrets
 import shutil
 
-from .agents.brain import SKILL_DESCRIPTIONS, SKILLS
+from .agents.brain import SKILL_DESCRIPTIONS, SKILLS, make_brain
+from .agents.personas import PERSONAS
 from .config import Config
 from .db import Database
 from .ids import new_api_key
@@ -20,7 +21,11 @@ from .services.catalog import PLATFORM_SERVICES, request_schemas
 
 
 def genesis(config: Config, seed: int | None = None, supply: float = 1_000_000, n_agents: int = 5,
-            force: bool = False) -> dict:
+            force: bool = False, brain: str = "scripted") -> dict:
+    """`brain` is given to every agent ("scripted", "sim:frugal"...); plain "sim" deals the
+    personas out so the market has a mix of them."""
+    if brain != "sim":
+        make_brain(brain)  # fail fast on a bad name
     if config.home.exists():
         if not force:
             raise RuntimeError(f"{config.home} already exists; pass --force to wipe it and start over")
@@ -49,8 +54,10 @@ def genesis(config: Config, seed: int | None = None, supply: float = 1_000_000, 
             }
             register_service(conn, name, "platform", acct, spec["description"], config.services_url, endpoints)
 
+        personas = rng.sample(sorted(PERSONAS), len(PERSONAS))
         used_names: set[str] = set()
-        for _ in range(n_agents):
+        for i in range(n_agents):
+            agent_brain = f"sim:{personas[i % len(personas)]}" if brain == "sim" else brain
             pname = person_name(rng)
             while pname in used_names:
                 pname = person_name(rng)
@@ -66,7 +73,7 @@ def genesis(config: Config, seed: int | None = None, supply: float = 1_000_000, 
             used_names.add(aname)
             skills = sorted(rng.sample(SKILLS, rng.randint(2, 4)))
             agent, akey = ledger.create_account(conn, "agent", aname, owner_id=person,
-                                                profile={"skills": skills, "brain": "scripted"})
+                                                profile={"skills": skills, "brain": agent_brain})
             stake = rng.randrange(400, 1_201, 50)
             ledger.transfer(conn, person, agent, to_micro(stake), f"{pname} funds {aname}")
             offerings = []
@@ -76,7 +83,7 @@ def genesis(config: Config, seed: int | None = None, supply: float = 1_000_000, 
                 offerings.append(register_agent_offering(conn, agent, aname, skill, SKILL_DESCRIPTIONS[skill], fee,
                                                          markup, config.agents_url))
             secrets["agents"][agent] = {"name": aname, "key": akey, "owner": person, "skills": skills,
-                                        "brain": "scripted", "offerings": offerings}
+                                        "brain": agent_brain, "offerings": offerings}
 
     config.secrets_path.write_text(json.dumps(secrets, indent=2))
     config.secrets_path.chmod(0o600)

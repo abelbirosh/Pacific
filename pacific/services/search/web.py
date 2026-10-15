@@ -26,6 +26,9 @@ API_HEADERS = {"User-Agent": "PacificSearch/0.1 (https://github.com/abelbirosh/P
 
 
 def client(timeout: float = 10.0) -> httpx.AsyncClient:
+    if os.environ.get("PACIFIC_SEARCH") == "offline":  # simulated upstreams, see offline.py
+        from .offline import OfflineWeb
+        return httpx.AsyncClient(transport=OfflineWeb(), headers=BROWSER_HEADERS, timeout=timeout, follow_redirects=True)
     return httpx.AsyncClient(headers=BROWSER_HEADERS, timeout=timeout, follow_redirects=True)
 
 

@@ -1,13 +1,17 @@
 """Hosts the agents. The exchange calls in here to run a task or to perform a delegated subtask."""
 
 
+import os
 import secrets as pysecrets
 import traceback
 from dataclasses import asdict
 
+from anyio import CapacityLimiter, to_thread
+
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from .. import faults
 from ..config import Config
 from .brain import AgentContext, Task, describe_result, make_brain
 from .client import ExchangeClient
@@ -18,6 +22,7 @@ def create_app(config: Config) -> FastAPI:
     secrets = config.secrets()
     agents: dict[str, dict] = secrets["agents"]
     app = FastAPI(title="Pacific agent host")
+    faults.install(app, faults.faults_path(config.home))
 
     def require_gateway(x_pacific_gateway_secret: str = Header(default="")):
         if not pysecrets.compare_digest(x_pacific_gateway_secret, secrets["gateway_secret"]):
@@ -55,12 +60,25 @@ def create_app(config: Config) -> FastAPI:
         return {"agents": [{"id": i, "name": a["name"], "skills": a["skills"], "brain": a["brain"]}
                            for i, a in agents.items()]}
 
+    # Brains are synchronous, so each runs on a worker thread. A brain at delegation depth d
+    # only ever waits on brains at depth d+1, so each depth gets its own threads: a busy level
+    # can never starve the level it is waiting on. (One shared pool deadlocks once every thread
+    # holds a task that is waiting for a hire.)
+    threads_per_level = int(os.environ.get("PACIFIC_AGENT_THREADS", 64))
+    levels: dict[int, CapacityLimiter] = {}
+
+    async def in_thread(level: int, *args):
+        if level not in levels:
+            levels[level] = CapacityLimiter(threads_per_level)
+        return await to_thread.run_sync(execute, *args, limiter=levels[level])
+
     @app.post("/agents/{agent_id}/run", dependencies=[Depends(require_gateway)])
-    def run(agent_id: str, work: Work):
-        return execute(agent_id, work, delegated=False)
+    async def run(agent_id: str, work: Work):
+        return await in_thread(0, agent_id, work, False)
 
     @app.post("/agents/{agent_id}/delegate", dependencies=[Depends(require_gateway)])
-    def delegate(agent_id: str, work: Work):
-        return execute(agent_id, work, delegated=True)
+    async def delegate(agent_id: str, work: Work):
+        depth = len((work.task.get("inputs") or {}).get("_chain", [])) or 1
+        return await in_thread(depth, agent_id, work, True)
 
     return app
