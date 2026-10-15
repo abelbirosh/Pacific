@@ -1,8 +1,8 @@
 """ocean_sandbox: runs Python in a throwaway directory with CPU, memory and time limits.
 
-This is resource-limited, not a security boundary: code runs as the local user with network
-access. Fine for a simulation driven by our own agents; isolate it (container/VM) before
-letting untrusted agents in.
+The code is untrusted, so it runs contained (see isolation.py): it sees only its own directory
+and the Python runtime, with no network and no other programs. Without a working isolation
+backend the endpoint refuses (503) rather than running code unisolated.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import os
 import resource
-import sys
 import tempfile
 import time
 from pathlib import Path
@@ -19,6 +18,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .common import ok
+from .isolation import select
 
 MAX_OUTPUT = 20_000
 MAX_TIMEOUT = 30
@@ -49,6 +49,9 @@ class Run(BaseModel):
 @router.post("/run")
 async def run(req: Run):
     timeout = max(1.0, min(float(req.timeout_s), MAX_TIMEOUT))
+    backend, problem = select()
+    if backend is None:
+        raise HTTPException(503, f"sandbox unavailable: {problem}")
     with tempfile.TemporaryDirectory(prefix="sandbox_") as tmp:
         root = Path(tmp)
         for rel, content in {**req.files, "main.py": req.code}.items():
@@ -59,9 +62,10 @@ async def run(req: Run):
             dest.write_text(content)
         before = {p for p in root.rglob("*") if p.is_file()}
         t0 = time.monotonic()
+        argv, cwd = backend.command(root)
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-I", "main.py",
-            cwd=tmp,
+            *argv,
+            cwd=cwd,
             env={"PATH": "/usr/bin:/bin", "HOME": tmp, "PYTHONIOENCODING": "utf-8"},
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             preexec_fn=_limits(int(timeout) + 1),

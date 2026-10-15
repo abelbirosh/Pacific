@@ -42,7 +42,8 @@ class Config:
         return f"http://{self.host}:{self.agents_port}"
 
     def secrets(self) -> dict:
-        """Keys written at genesis: admin key, gateway secret, every account's API key."""
+        """Keys written at genesis: the admin key and every account's API key. (The exchange's
+        grant-signing key pair sits next to this file; see grants.py.)"""
         if not self.secrets_path.exists():
             raise RuntimeError(f"No economy found at {self.home}. Run `pacific init` first.")
         return json.loads(self.secrets_path.read_text())

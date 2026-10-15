@@ -2,17 +2,17 @@
 
 
 import os
-import secrets as pysecrets
 import traceback
 from dataclasses import asdict
 
 from anyio import CapacityLimiter, to_thread
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from .. import faults
 from ..config import Config
+from ..grants import Verifier, require_grant
 from .brain import AgentContext, Task, describe_result, make_brain
 from .client import ExchangeClient
 from .tools import Toolbox
@@ -23,10 +23,7 @@ def create_app(config: Config) -> FastAPI:
     agents: dict[str, dict] = secrets["agents"]
     app = FastAPI(title="Pacific agent host")
     faults.install(app, faults.faults_path(config.home))
-
-    def require_gateway(x_pacific_gateway_secret: str = Header(default="")):
-        if not pysecrets.compare_digest(x_pacific_gateway_secret, secrets["gateway_secret"]):
-            raise HTTPException(401, "only the exchange may dispatch work to agents")
+    app.state.grants = Verifier.load(config.home)  # only the exchange may dispatch work to agents
 
     class Work(BaseModel):
         task: dict
@@ -72,11 +69,11 @@ def create_app(config: Config) -> FastAPI:
             levels[level] = CapacityLimiter(threads_per_level)
         return await to_thread.run_sync(execute, *args, limiter=levels[level])
 
-    @app.post("/agents/{agent_id}/run", dependencies=[Depends(require_gateway)])
+    @app.post("/agents/{agent_id}/run", dependencies=[Depends(require_grant)])
     async def run(agent_id: str, work: Work):
         return await in_thread(0, agent_id, work, False)
 
-    @app.post("/agents/{agent_id}/delegate", dependencies=[Depends(require_gateway)])
+    @app.post("/agents/{agent_id}/delegate", dependencies=[Depends(require_grant)])
     async def delegate(agent_id: str, work: Work):
         depth = len((work.task.get("inputs") or {}).get("_chain", [])) or 1
         return await in_thread(depth, agent_id, work, True)

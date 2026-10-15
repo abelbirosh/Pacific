@@ -1,31 +1,35 @@
 """Programmatic completion checks. Each check inspects real state and returns pass/fail.
 
 A task lists checks like {"type": "db_min_rows", "db": "app", "table": "users", "min": 5}.
-State checks read the task's workspace directly from the platform services (free of charge).
+State checks read the task's workspace directly from the platform services (free of charge),
+with a grant the exchange signs for each read.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Awaitable, Callable
 
 import httpx
 
+from ..grants import Signer
 from ..money import fmt, to_micro
 
 
 class CheckContext:
-    def __init__(self, services_url: str, gateway_secret: str, workspace: str, output: str,
+    def __init__(self, services_url: str, signer: Signer, workspace: str, output: str,
                  job: dict, services_used: set[str]):
-        self.services_url = services_url
-        self.headers = {"X-Pacific-Gateway-Secret": gateway_secret, "X-Pacific-Workspace": workspace}
+        self.services_url, self.signer, self.workspace = services_url, signer, workspace
         self.output = output or ""
         self.job = job
         self.services_used = services_used
 
     async def service(self, path: str, body: dict) -> tuple[int, dict]:
+        raw = json.dumps(body).encode()
         async with httpx.AsyncClient(timeout=60) as http:
-            r = await http.post(self.services_url + path, json=body, headers=self.headers)
+            r = await http.post(self.services_url + path, content=raw,
+                                headers=self.signer.headers(path, raw, ws=self.workspace, call="check"))
         return r.status_code, r.json()
 
 

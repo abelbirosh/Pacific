@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 from .config import Config
 from .faults import faults_path
+from .grants import Verifier
 
 
 def free_port() -> int:
@@ -27,10 +28,9 @@ def build_apps(config: Config) -> list[tuple[str, FastAPI, int]]:
     from .exchange.app import create_app as exchange_app
     from .services.app import create_app as services_app
 
-    secrets = config.secrets()
     return [
         ("exchange", exchange_app(config), config.exchange_port),
-        ("services", services_app(config.data_dir, secrets["gateway_secret"], faults_path(config.home)),
+        ("services", services_app(config.data_dir, Verifier.load(config.home), faults_path(config.home)),
          config.services_port),
         ("agents", agents_app(config), config.agents_port),
     ]

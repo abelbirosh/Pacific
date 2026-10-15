@@ -51,7 +51,7 @@ class SimStats:
     gave_up: bool = False
 
     def violations(self) -> list[dict]:
-        return [p for p in self.probes if not p["ok"] and not p.get("known")]
+        return [p for p in self.probes if not p["ok"]]
 
     def as_dict(self) -> dict:
         return {**asdict(self), "violations": self.violations()}
@@ -296,8 +296,8 @@ class Probes:
 
     A refusal with a different status than expected (say 402 because the hold was checked before
     the input, or an upstream 503) is recorded as `unexpected` but is not a violation. A violation
-    is a probe the exchange accepted, charged for, or crashed on. `known` marks a documented
-    weakness (reported, not a violation)."""
+    is a probe the exchange accepted, charged for, or crashed on. The sandbox escape is a paid
+    call that is meant to run; its violation is the program getting out."""
 
     def __init__(self, ctx: AgentContext, rng: random.Random, stats: SimStats):
         self.ctx, self.rng, self.stats = ctx, rng, stats
@@ -348,7 +348,7 @@ class Probes:
                     ("read_parent_job", {403}, lambda: self.client.raw("GET", f"/v1/jobs/{parent}")),
                 ]
             if self.ctx.remaining() > 2:
-                probes.append(("sandbox_reads_host", None, self._sandbox_read))
+                probes.append(("sandbox_escape", None, self._sandbox_escape))
         for name, expected, fn in probes:
             if self.rng.random() < rate:
                 self._run(name, expected, fn)
@@ -369,8 +369,8 @@ class Probes:
             self.stats.probes.append({"probe": name, "expected": sorted(expected or []), "status": 0,
                                       "ok": False, "charged": 0.0, "detail": f"{type(e).__name__}: {e}"})
             return
-        if expected is None:  # a known weakness: the response body says whether it held
-            entry = {"probe": name, "expected": [], "status": r.status_code, "known": True, "charged": charged, **extra}
+        if expected is None:  # a paid probe: the response body says whether it got out
+            entry = {"probe": name, "expected": [], "status": r.status_code, "charged": charged, **extra}
         else:
             crashed = r.status_code >= 500 and not _is_json(r)  # the exchange itself fell over
             entry = {"probe": name, "expected": sorted(expected), "status": r.status_code, "charged": charged,
@@ -380,13 +380,37 @@ class Probes:
                 entry["detail"] = r.text[:300]
         self.stats.probes.append(entry)
 
-    def _sandbox_read(self):
-        """The sandbox is resource-limited, not isolated: can its code read the exchange's secrets?"""
+    def _sandbox_escape(self):
+        """Pay for a sandbox run whose code tries to get out: read the exchange's secrets and
+        keys, list the host, reach the exchange over the network, start another program."""
         home = Path(self.ctx.tools.notes_path).parents[2]
-        code = f"try:\n    print('LEAK' if 'admin_key' in open({str(home / 'secrets.json')!r}).read() else 'SAFE')\nexcept Exception as e:\n    print('SAFE', type(e).__name__)\n"
-        r = self._post("/v1/call/ocean_sandbox/run", json={"code": code, "timeout_s": 2})
+        url = self.client.base_url
+        code = (
+            "import os, socket, subprocess\n"
+            f"home = {str(home)!r}\n"
+            "for name in ('secrets.json', 'exchange_key.pem'):\n"
+            "    try:\n"
+            "        open(os.path.join(home, name)).read(16); print('LEAK read', name)\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "try:\n"
+            "    os.listdir(home); print('LEAK list home')\n"
+            "except Exception:\n"
+            "    pass\n"
+            "try:\n"
+            f"    socket.create_connection(({url.host!r}, {url.port}), timeout=2); print('LEAK network')\n"
+            "except Exception:\n"
+            "    pass\n"
+            "try:\n"
+            "    subprocess.run(['/bin/echo'], capture_output=True); print('LEAK exec')\n"
+            "except Exception:\n"
+            "    pass\n"
+            "print('done')\n"
+        )
+        r = self._post("/v1/call/ocean_sandbox/run", json={"code": code, "timeout_s": 3})
         stdout = (r.json().get("result") or {}).get("stdout", "") if r.is_success else ""
-        return r, {"ok": "LEAK" not in stdout, "detail": stdout.strip()[:80]}
+        leaks = [line for line in stdout.splitlines() if line.startswith("LEAK")]
+        return r, {"ok": not leaks, "detail": "; ".join(leaks) or stdout.strip()[:80]}
 
 
 def _is_json(r: httpx.Response) -> bool:

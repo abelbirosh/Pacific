@@ -9,7 +9,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from fastapi import Header, HTTPException
+from fastapi import Depends, HTTPException
+
+from ..grants import require_grant
 
 _SAFE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 
@@ -18,10 +20,12 @@ def ok(result, units: float = 0.0) -> dict:
     return {"result": result, "usage": {"units": round(float(units), 4)}}
 
 
-def workspace(x_pacific_workspace: str = Header(...)) -> str:
-    if not _SAFE.match(x_pacific_workspace):
+def workspace(grant: dict = Depends(require_grant)) -> str:
+    """The workspace the exchange's grant names: a caller can't choose it."""
+    ws = grant.get("ws")
+    if not isinstance(ws, str) or not _SAFE.match(ws):
         raise HTTPException(400, "bad workspace id")
-    return x_pacific_workspace
+    return ws
 
 
 def safe_name(name: str, what: str = "name") -> str:

@@ -35,6 +35,10 @@ class ExchangeClient:
         self._http = httpx.Client(base_url=base_url, timeout=timeout,
                                   headers={"Authorization": f"Bearer {api_key}"})
 
+    @property
+    def base_url(self) -> httpx.URL:
+        return self._http.base_url
+
     def _check(self, resp: httpx.Response) -> dict:
         try:
             data = resp.json()

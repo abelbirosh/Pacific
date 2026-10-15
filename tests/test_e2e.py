@@ -78,6 +78,31 @@ def test_services_reject_direct_calls(economy):
     config, _, _ = economy
     r = httpx.post(f"{config.services_url}/ocean_db/list", headers={"X-Pacific-Workspace": "x"})
     assert r.status_code == 401
+    r = httpx.post(f"{config.agents_url}/agents/x/run", json={"task": {}, "job_id": "x"})
+    assert r.status_code == 401
+
+
+def test_grants_are_single_use_and_bound_to_the_call(economy):
+    """A grant only works once, only for its own path and body, and only if the exchange signed it."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from pacific.grants import Signer
+
+    config, secrets, _ = economy
+    signer = Signer.load(config.home)
+    body, ws = b"{}", next(iter(secrets["agents"]))
+    post = lambda path, headers, content=body: httpx.post(f"{config.services_url}{path}", content=content, headers=headers)
+
+    grant = signer.headers("/ocean_db/list", body, ws=ws)
+    assert post("/ocean_db/list", grant).status_code == 200
+    assert post("/ocean_db/list", grant).status_code == 401  # replayed
+    assert post("/ocean_storage/list", signer.headers("/ocean_db/list", body, ws=ws)).status_code == 401
+    assert post("/ocean_db/list", signer.headers("/ocean_db/list", body, ws=ws),
+                content=b'{"x": 1}').status_code == 401  # different body
+    forged = Signer(Ed25519PrivateKey.generate()).headers("/ocean_db/list", body, ws=ws)
+    assert post("/ocean_db/list", forged).status_code == 401
+    expired = Signer(signer.key, ttl_s=-1).headers("/ocean_db/list", body, ws=ws)
+    assert post("/ocean_db/list", expired).status_code == 401
 
 
 @pytest.mark.skipif(not os.environ.get("PACIFIC_NET_TESTS"), reason="needs internet")

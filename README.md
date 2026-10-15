@@ -13,7 +13,7 @@ A small economy where AI agents get a **budget** and a **task**, and spend **wav
      ocean_exa / ocean_tavily / ocean_brave  (search)     5 agents, each with a pluggable brain
      ocean_db       (real SQLite per workspace)           and 2-4 skills it sells to other agents
      ocean_shield   (bandit, secret rules, OSV CVEs)        └─ calls back into the exchange,
-     ocean_sandbox  (run Python w/ limits)                     paying from its own wallet
+     ocean_sandbox  (run Python, isolated)                     paying from its own wallet
      ocean_storage  (files per workspace)
 ```
 
@@ -63,7 +63,7 @@ uv run pacific ledger
 | `ocean_exa` | 8 sources (adds MDN, npm, arXiv, Bing), quality priors, relevance filter, source diversity, source-aware readers (SO answers API, Wikipedia extracts, GitHub READMEs), content rerank + highlights | 3.0 + 0.8/page |
 | `ocean_db` | SQLite file per database per workspace; ATTACH blocked, 5 s statement limit | create 5.0, query 0.1 + 0.001/row, ... |
 | `ocean_shield` | `bandit` on Python, secret and dangerous-pattern rules on all files, OSV.dev lookup for pinned requirements | 2.0 + 1.5/KLOC, deps 1.0 + 0.25/pkg |
-| `ocean_sandbox` | Python subprocess in a temp dir with CPU, file-size and wall-clock limits | 0.25 + 0.5/s |
+| `ocean_sandbox` | Python in an isolated temp dir (no host files, network or other programs) with CPU, file-size and wall-clock limits | 0.25 + 0.5/s |
 | `ocean_storage` | Files on disk per workspace | put 0.05 + 0.01/KB |
 
 All the scrapers are hand-written (`pacific/services/search/web.py`). General web engines (Bing, DuckDuckGo, Startpage, Brave, Mojeek) block or poison bot traffic. Bing, for example, answers multi-word queries with unrelated pages. So the tiers lean on keyless APIs that honour the full query. Set `GITHUB_TOKEN` to raise GitHub's unauthenticated rate limit. StackExchange allows about 300 keyless requests per day per IP.
@@ -135,7 +135,16 @@ See `tasks/` for research (rich and shoestring budgets), database, security, cod
 | `POST /v1/tasks`, `POST /v1/tasks/{id}/run`, `GET /v1/tasks/{id}` | task lifecycle and report (admin, or the agent's owner) |
 | `GET /v1/admin/{accounts,transactions,audit}`, `POST /v1/admin/{mint,transfer}` | admin |
 
-Auth uses `Authorization: Bearer <key>`. Keys live in `.pacific/secrets.json`, which is gitignored. Platform services and the agent host accept calls only from the exchange, via a shared gateway secret.
+Auth uses `Authorization: Bearer <key>`. Keys live in `.pacific/secrets.json`, which is gitignored.
+
+Platform services and the agent host accept a request only if it carries a **grant** the exchange signed for that exact call (`pacific/grants.py`). The exchange signs with an Ed25519 key (`.pacific/exchange_key.pem`). Providers hold only the public key, so nothing on their side can mint grants. A grant names:
+- the path it's for
+- a hash of the exact body
+- the workspace to act in, which providers take from the grant, not from a header
+- the call it pays for
+- a 30-second expiry
+
+Each grant is accepted once. A leaked grant is worth at most the one call it was issued for, which was already reserved and paid.
 
 ## Traffic simulation
 
@@ -171,6 +180,10 @@ PACIFIC_SOAK=500 uv run pytest tests/test_traffic.py -k soak -s   # long chaos r
 
 ## Known limits
 
-- The sandbox enforces resource limits but is **not** a security boundary: code runs as your user with network access, and can read the exchange's `secrets.json` (the adversary persona's `sandbox_reads_host` probe shows this). Put it in a container or VM before untrusted (e.g. LLM-driven) agents use it.
+- `ocean_sandbox` isolates the code it runs (`pacific/services/isolation.py`):
+  - macOS (`sandbox-exec`): deny by default; it may read only the Python runtime and read/write only its job directory, with no network and no other programs.
+  - Linux (bubblewrap): fresh namespaces with no network, and the runtime mounted read-only.
+
+  `PACIFIC_SANDBOX` picks `auto` (default), `seatbelt`, `bwrap` or `unsafe`. With no working backend, the sandbox refuses to run code. The adversary persona's `sandbox_escape` probe pays for a run that tries to read the exchange's keys, list the host, reach the exchange and start a program; any success is a violation. The bubblewrap backend hasn't been exercised on Linux yet. For hostile multi-tenant use, a microVM (e.g. Firecracker) is the stronger boundary.
 - Search quality depends on public APIs and their rate limits. A source that fails is reported in `source_errors`, and the call doesn't fail as long as any source succeeds.
 - Everything runs on one machine against one SQLite ledger. The service boundaries are real HTTP, so splitting them out later is mostly deployment work.

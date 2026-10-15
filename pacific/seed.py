@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import json
 import random
-import secrets as pysecrets
 import shutil
 
 from .agents.brain import SKILL_DESCRIPTIONS, SKILLS, make_brain
 from .agents.personas import PERSONAS
 from .config import Config
 from .db import Database
+from .grants import ensure_keys
 from .ids import new_api_key
 from .ledger import Ledger
 from .money import to_micro
@@ -35,8 +35,9 @@ def genesis(config: Config, seed: int | None = None, supply: float = 1_000_000, 
 
     db = Database(config.ledger_path)
     ledger = Ledger(db)
-    secrets = {"admin_key": new_api_key(), "gateway_secret": pysecrets.token_urlsafe(32), "people": {}, "agents": {}}
-    schemas = request_schemas(services_app.create_app(config.data_dir, "unused"))
+    secrets = {"admin_key": new_api_key(), "people": {}, "agents": {}}
+    ensure_keys(config.home)  # the exchange signs every call it forwards with this key
+    schemas = request_schemas(services_app.create_app(config.data_dir, None))
 
     with db.tx() as conn:
         db_meta = conn.execute

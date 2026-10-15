@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from ..config import Config
 from .. import invariants
 from ..db import Database
+from ..grants import Signer
 from ..ids import new_id
 from ..ledger import Ledger, LedgerError
 from ..money import fmt, to_micro, to_wd
@@ -44,6 +45,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
     platform_timeout = float(os.environ.get("PACIFIC_PLATFORM_TIMEOUT", PLATFORM_TIMEOUT))
     delegation_timeout = float(os.environ.get("PACIFIC_DELEGATION_TIMEOUT", DELEGATION_TIMEOUT))
     db = db or Database(config.ledger_path)
+    signer = Signer.load(config.home)  # signs a grant for every request forwarded to a provider
     ledger, registry = Ledger(db), Registry(db)
     # No connection cap: a delegated call holds its connection while the hired agent makes calls
     # of its own, so a capped pool can fill with callers waiting on callees that can't connect.
@@ -234,14 +236,10 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         child = None
         try:
             if svc["kind"] == "platform":
+                raw = json.dumps(body).encode()
                 resp = await http.post(
-                    svc["base_url"] + ep["path"], json=body, timeout=platform_timeout,
-                    headers={
-                        "X-Pacific-Gateway-Secret": secrets["gateway_secret"],
-                        "X-Pacific-Workspace": workspace,
-                        "X-Pacific-Caller": acct["id"],
-                        "X-Pacific-Call": call_id,
-                    },
+                    svc["base_url"] + ep["path"], content=raw, timeout=platform_timeout,
+                    headers=signer.headers(ep["path"], raw, ws=workspace, call=call_id, sub=acct["id"]),
                 )
                 http_status = resp.status_code
                 data = resp.json()
@@ -254,10 +252,11 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                 with db.tx() as conn:
                     child = ledger.open_job(conn, svc["provider_id"], to_micro(body["budget"]), parent_job_id=x_pacific_job)
                     conn.execute("UPDATE calls SET child_job_id = ? WHERE id = ?", (child, call_id))
+                raw = json.dumps({"task": body, "job_id": child, "buyer_id": acct["id"],
+                                  "skill": json.loads(svc["meta"]).get("skill")}).encode()
                 resp = await http.post(
-                    svc["base_url"] + ep["path"], timeout=delegation_timeout,
-                    json={"task": body, "job_id": child, "buyer_id": acct["id"], "skill": json.loads(svc["meta"]).get("skill")},
-                    headers={"X-Pacific-Gateway-Secret": secrets["gateway_secret"]},
+                    svc["base_url"] + ep["path"], content=raw, timeout=delegation_timeout,
+                    headers=signer.headers(ep["path"], raw, ws=workspace, call=call_id, sub=acct["id"]),
                 )
                 with db.tx() as conn:
                     conn.execute("UPDATE jobs SET status = 'closed' WHERE id = ?", (child,))
@@ -343,12 +342,10 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
             conn.execute("UPDATE tasks SET status='running' WHERE id=?", (task_id,))
         spec = json.loads(task["spec"])
         try:
-            resp = await http.post(
-                f"{config.agents_url}/agents/{task['agent_id']}/run",
-                json={"task": spec, "job_id": task["job_id"]},
-                headers={"X-Pacific-Gateway-Secret": secrets["gateway_secret"]},
-                timeout=delegation_timeout,
-            )
+            path = f"/agents/{task['agent_id']}/run"
+            raw = json.dumps({"task": spec, "job_id": task["job_id"]}).encode()
+            resp = await http.post(config.agents_url + path, content=raw, timeout=delegation_timeout,
+                                   headers=signer.headers(path, raw, ws=task["job_id"], call=task_id))
             result = resp.json() if resp.is_success else {"status": "error", "output": resp.text}
         except httpx.HTTPError as e:
             result = {"status": "error", "output": f"agent host unreachable: {e}"}
@@ -359,7 +356,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         used = {r["service"] for r in db.all(
             "SELECT DISTINCT c.service FROM calls c JOIN jobs j ON j.id = c.job_id "
             "WHERE j.root_job_id = ? AND c.status = 'ok'", (job["root_job_id"],))}
-        ctx = CheckContext(config.services_url, secrets["gateway_secret"], job["root_job_id"],
+        ctx = CheckContext(config.services_url, signer, job["root_job_id"],
                            result.get("output", ""), job, used)
         checks = await run_checks(ctx, spec.get("checks", []))
         if result.get("status") == "error":

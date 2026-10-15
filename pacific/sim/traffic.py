@@ -187,7 +187,7 @@ def summarize(records: list[TaskRecord], violations: list[dict], wall: float, cf
               audit: dict, counts: dict) -> dict:
     by = lambda key: {k: _group(v) for k, v in sorted(_bucket(records, key).items())}
     probe_violations = [{"task": r.n, **v} for r in records for v in r.sim.get("violations", [])]
-    known = Counter(p["probe"] for r in records for p in r.sim.get("probes", []) if p.get("known") and not p.get("ok"))
+    probes_run = Counter(p["probe"] for r in records for p in r.sim.get("probes", []))
     unexpected = Counter(f"{p['probe']}->{p['status']}" for r in records for p in r.sim.get("probes", [])
                          if p.get("unexpected"))
     crashed = [asdict(r) for r in records if is_crash(r)]
@@ -202,7 +202,7 @@ def summarize(records: list[TaskRecord], violations: list[dict], wall: float, cf
         "by_budget": by("budget_class"),
         "invariant_violations": violations,
         "probe_violations": probe_violations,
-        "known_weaknesses": dict(known),
+        "probes_run": dict(sorted(probes_run.items())),
         "probe_refusals_with_other_status": dict(unexpected),
         "crashes": crashed[:20],
         "crash_count": len(crashed),
@@ -260,7 +260,5 @@ def format_report(rep: dict) -> str:
     if rep["crashes"]:
         out.append(f"CRASHES / TRANSPORT ERRORS ({rep['crash_count']}, {len(rep['crashes'])} shown):")
         out += [f"  #{c['n']} {c['kind']} {c['status']}: {(c['error'] or '')[:160]}" for c in rep["crashes"]]
-    if rep["known_weaknesses"]:
-        out.append(f"known weaknesses confirmed: {rep['known_weaknesses']}")
     out.append("RESULT: " + ("OK" if rep["ok"] else "PROBLEMS FOUND"))
     return "\n".join(out)
