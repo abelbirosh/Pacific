@@ -127,19 +127,18 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .dg-before .dg-wire { stroke: var(--coral); opacity: 0.75; }
 .dg-head { fill: var(--coral); }
 /* the part of the web that turns agents away: a dark chip in coral type, its wire stopped by an X */
-.dg-before .dg-shut .dg-loose { fill: #11171c; }
+.dg-before .dg-shut .dg-loose { fill: #11171c; stroke: var(--coral); stroke-width: 1.5; }
 .dg-before .dg-shut text { fill: var(--coral); }
 .dg-block circle { fill: var(--black); stroke: var(--coral); stroke-width: 2; }
 .dg-block path { fill: none; stroke: var(--paper); stroke-width: 2.5; stroke-linecap: round; }
 .dg-after .dg-wire { stroke: var(--paper); stroke-width: 2.5; }
 .dg-end { fill: var(--paper); }
-/* Pacific is the one white thing on the board; its stages read as dark bands on it */
-.dg-slab > rect { fill: var(--paper); }
-.dg-slab .dg-band { fill: var(--ink); }
+/* Pacific is the one light thing on the board: a soft sea-white slab with its stages a shade deeper */
+.dg-slab > rect { fill: #eef3f6; }
+.dg-slab .dg-band { fill: #cfdce4; }
 .dg-slab text { fill: var(--ink); }
-.dg-slab .dg-layer-label text { fill: var(--paper); }
-.dg-stage-arrow path { fill: none; stroke: var(--ink); stroke-width: 2; }
-.dg-stage-arrow polygon { fill: var(--ink); }
+.dg-stage-arrow path { fill: none; stroke: var(--petrol); stroke-width: 2; }
+.dg-stage-arrow polygon { fill: var(--petrol); }
 
 /* Heading-only chapters, ready for the next content pass. */
 .chapter {
