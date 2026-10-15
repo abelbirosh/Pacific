@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { CSSProperties } from 'react'
 import { AfterDiagram, BeforeDiagram } from './Diagrams'
+import { Demo } from './Demo'
 
 const A = '/assets/'
 const i = (n: number) => ({ '--i': n }) as CSSProperties
@@ -77,7 +78,10 @@ function Header() {
     <header className="header">
       <a className="wordmark" href="#top">Pacific</a>
       <nav className="nav" aria-label="Sections">
-        <a className="link" href="#before-after">Before and after</a>
+        <a className="link" href="#before-after">Before and After</a>
+        <a className="link" href="#demo">Demo</a>
+        <a className="link" href="#economics">Economics</a>
+        <a className="link" href="#future">Future</a>
       </nav>
     </header>
   )
@@ -87,11 +91,11 @@ function Hero() {
   return (
     <section className="hero" id="top">
       <video className="hero-video" autoPlay muted loop playsInline preload="auto"
-        poster={A + 'pacific-sea-poster.jpg'} aria-hidden="true">
+        poster={A + 'pacific-background-poster.jpg'} aria-hidden="true">
         {/* phones get 720p, large and high-density screens the 4K master, everything between 1080p */}
-        <source src={A + 'pacific-sea-720.mp4'} type="video/mp4" media="(max-width: 600px)" />
-        <source src={A + 'pacific-sea-4k.mp4'} type="video/mp4" media="(min-width: 1024px)" />
-        <source src={A + 'pacific-sea-1080.mp4'} type="video/mp4" />
+        <source src={A + 'pacific-background.mp4'} type="video/mp4" media="(max-width: 600px)" />
+        <source src={A + 'pacific-background-4k.mp4'} type="video/mp4" media="(min-width: 1024px)" />
+        <source src={A + 'pacific-background-hd.mp4'} type="video/mp4" />
       </video>
       <Header />
       <div className="hero-copy">
@@ -131,6 +135,23 @@ function BeforeAfter() {
   )
 }
 
+function Chapters() {
+  return (
+    <>
+      <section className="chapter interaction" id="demo" aria-labelledby="interaction-head">
+        <h2 id="interaction-head" data-reveal>Agent-to-agent Interaction</h2>
+        <Demo />
+      </section>
+      <section className="chapter economics" id="economics" aria-labelledby="economics-head">
+        <h2 id="economics-head" data-reveal>First customer and economics</h2>
+      </section>
+      <section className="chapter future" id="future" aria-labelledby="future-head">
+        <h2 id="future-head" data-reveal>Future</h2>
+      </section>
+    </>
+  )
+}
+
 export default function App() {
   useReveal()
   useDrawDiagrams()
@@ -139,10 +160,11 @@ export default function App() {
     <>
       <main>
         <Hero />
-        {/* below the video the page is one board: flat tiles butted together, the gaps are the lines */}
+        {/* The comparison shares the sea's background before the next chapters. */}
         <div className="board">
           <BeforeAfter />
         </div>
+        <Chapters />
       </main>
     </>
   )

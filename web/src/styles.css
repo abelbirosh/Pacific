@@ -1,6 +1,5 @@
-/* Pacific: the transaction layer for AI agents. The first screen is the sea itself; below it the page is
-   one board of flat, square tiles butted together on the sea's own dark, so every boundary is a hard,
-   even line. Colours come from the video: slate sea-dark ground, sea blue, foam. Coral marks the tangle. */
+/* Pacific: the transaction layer for AI agents. The first screen is the sea itself; the comparison
+   continues on the same sea-dark ground, with space separating its two views. Coral marks the tangle. */
 
 :root {
   /* from the footage: its shadows, its slate mid-water, its foam */
@@ -13,6 +12,8 @@
   --ink: #0b1218;
   --paper: #ffffff;
   --coral: #ff3b1f;
+  --diagram-panel: #29414e;
+  --diagram-chip: #446477;
 
   --font: 'Switzer', ui-sans-serif, system-ui, sans-serif;
   /* the face of speedrun's own headlines, used only for the alpha speedrun lockup */
@@ -67,15 +68,6 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
   padding: 0 var(--margin) 4.5rem; background: var(--sea);
 }
 .hero-video { position: absolute; inset: 0; z-index: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; }
-/* over the video: a translucent wash of deep ocean blue so the type reads while the waves stay sharp,
-   a little extra shade behind the bar, and at the foot the water sinks into the board's colour */
-.hero::before {
-  content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none;
-  background:
-    linear-gradient(0deg, var(--sea), rgb(14 23 29 / 0.85) 7%, rgb(14 23 29 / 0) 30%),
-    linear-gradient(180deg, rgb(0 0 0 / 0.25), rgb(0 0 0 / 0) 18%);
-  background-color: rgb(4 29 68 / 0.6);
-}
 .hero > .header, .hero-copy { position: relative; z-index: 2; }
 
 .header { display: flex; align-items: center; gap: clamp(1rem, 3vw, 2.5rem); padding: 1.25rem 0; }
@@ -110,29 +102,152 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .ba-before, .ba-after { grid-column: span 6; display: grid; align-content: start; gap: clamp(2rem, 4vw, 3.5rem); padding-bottom: calc(var(--pad) * 1.5); }
 .ba-before { background: var(--black); }
 .ba-after { background: var(--petrol); }
-.ba-word { font-size: var(--step-display); font-weight: 600; letter-spacing: -0.05em; line-height: 0.9; }
+.ba-word { font-size: var(--step-display); font-weight: 600; text-align: center; letter-spacing: -0.05em; line-height: 0.9; }
 .ba-before .ba-word { color: var(--coral); }
+
+/* Carry the board's background up into the water and ease into its first tiles. */
+@media (min-width: 1024px) {
+  .hero::after {
+    content: ''; position: absolute; inset: auto 0 0; height: 30svh; z-index: 1; pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--sea));
+  }
+  .board { padding: clamp(2rem, 4vw, 4rem) var(--margin) clamp(3rem, 6vw, 6rem); }
+  .board > .row { column-gap: clamp(2.5rem, 5vw, 6rem); }
+  .ba-before, .ba-after { padding: 0; background: transparent; gap: clamp(2rem, 3vw, 3rem); }
+  .ba-word { font-size: clamp(3.5rem, 5vw, 5.5rem); }
+  .ba-before .ba-word { color: var(--foam); }
+}
 
 /* the diagrams: agents and providers are tinted panels, the tangle is coral, Pacific is the one solid thing */
 .diagram { width: 100%; height: auto; overflow: visible; }
 .diagram text { fill: var(--paper); font-family: var(--font); letter-spacing: -0.01em; }
-.dg-panel { fill: rgb(255 255 255 / 0.07); }
-.dg-chip, .dg-hub { fill: rgb(255 255 255 / 0.13); }
-.dg-before .dg-hub { fill: #182027; }
-.dg-before .dg-loose { fill: #1f2830; }
+.dg-panel, .dg-hub { fill: var(--diagram-panel); }
+.dg-chip { fill: var(--diagram-chip); }
 .dg-wire { fill: none; stroke-width: 1.6; stroke-linecap: round; }
 .dg-before .dg-wire { stroke: var(--coral); opacity: 0.75; }
 .dg-head { fill: var(--coral); }
 /* the part of the web that turns agents away: a dark chip in coral type, its wire stopped by an X */
-.dg-before .dg-shut .dg-loose { fill: #11171c; }
+.dg-before .dg-shut .dg-loose { fill: #11171c; stroke: var(--coral); stroke-width: 1.5; }
 .dg-before .dg-shut text { fill: var(--coral); }
 .dg-block circle { fill: var(--black); stroke: var(--coral); stroke-width: 2; }
 .dg-block path { fill: none; stroke: var(--paper); stroke-width: 2.5; stroke-linecap: round; }
 .dg-after .dg-wire { stroke: var(--paper); stroke-width: 2.5; }
 .dg-end { fill: var(--paper); }
-.dg-slab > rect { fill: var(--paper); }
-.dg-slab .dg-band { fill: var(--foam); }
+/* Pacific is the one light thing on the board: a soft sea-white slab with its stages a shade deeper */
+.dg-slab > rect { fill: #eef3f6; }
+.dg-slab .dg-band { fill: #cfdce4; }
 .dg-slab text { fill: var(--ink); }
+.dg-stage-arrow path { fill: none; stroke: var(--petrol); stroke-width: 2; }
+.dg-stage-arrow polygon { fill: var(--petrol); }
+
+/* Heading-only chapters, ready for the next content pass. */
+.chapter {
+  padding: clamp(4rem, 7vw, 7rem) var(--margin);
+  background: var(--sea); color: var(--foam);
+}
+.chapter h2 { max-width: 22ch; margin-inline: auto; text-align: center; font-size: clamp(3rem, 6vw, 6rem); line-height: 1.02; }
+.economics { background: var(--tile); }
+
+/* ---------- the demo: one request clicked through Pacific's four stages, sized to fit one screen ---------- */
+.interaction { display: flex; flex-direction: column; justify-content: center; min-height: 100svh; padding-block: clamp(2rem, 4vh, 3.5rem); }
+.interaction h2 { font-size: clamp(2.5rem, 4.5vw, 4.5rem); }
+.demo { width: 100%; max-width: 76rem; margin: clamp(1.25rem, 3vh, 2.25rem) auto 0; display: grid; gap: var(--gap); color: var(--paper); }
+.demo-eyebrow { display: block; margin-bottom: 0.25rem; font-size: var(--step-small); font-weight: 500; color: rgb(228 236 240 / 0.6); }
+.demo-request { padding: 1rem 1.25rem; background: var(--tile); font-size: clamp(1.0625rem, 0.9rem + 0.5vw, 1.375rem); line-height: 1.3; letter-spacing: -0.015em; }
+
+/* the rail echoes the bands in the diagram: the current stage is the solid one */
+.demo-rail { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap); }
+.demo-rail li { position: relative; display: flex; }
+.demo-rail li + li::before {
+  content: '→'; position: absolute; left: calc(var(--gap) / -2); top: 50%; z-index: 1;
+  transform: translate(-50%, -50%); font-size: 0.875rem; color: rgb(228 236 240 / 0.5);
+}
+.demo-rail button {
+  flex: 1; display: flex; align-items: center; gap: 0.75rem; padding: 0.875rem 1.25rem;
+  border: 0; border-radius: 0; background: var(--tile); color: rgb(228 236 240 / 0.6);
+  font: inherit; font-weight: 600; letter-spacing: -0.015em; text-align: left; cursor: pointer;
+  transition: background var(--t-hover) ease, color var(--t-hover) ease;
+}
+.demo-rail button.is-done { color: var(--foam); }
+.demo-rail button[aria-selected='true'] { background: var(--paper); color: var(--ink); }
+@media (hover: hover) and (pointer: fine) {
+  .demo-rail button:not([aria-selected='true']):hover { background: var(--diagram-panel); color: var(--paper); }
+}
+.demo-num {
+  display: inline-grid; place-items: center; flex: none; width: 1.75rem; height: 1.75rem;
+  font-size: var(--step-small); border: 1.5px solid currentColor; font-variant-numeric: tabular-nums;
+}
+.demo-rail button[aria-selected='true'] .demo-num { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+
+/* a fixed height, so moving between stages never shifts the page */
+.demo-panel { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: var(--gap); height: clamp(17rem, 38vh, 21rem); }
+.demo-copy { display: flex; flex-direction: column; gap: 1.25rem; padding: var(--pad); background: var(--tile); }
+.demo-summary { font-size: clamp(1.125rem, 0.95rem + 0.6vw, 1.5rem); font-weight: 500; line-height: 1.25; letter-spacing: -0.02em; }
+.demo-uses { margin-top: auto; font-size: var(--step-small); line-height: 1.6; color: rgb(228 236 240 / 0.75); }
+.demo-uses-label { margin-right: 0.25rem; font-weight: 600; color: var(--foam); }
+.demo-uses b { display: inline-block; margin-right: 0.3rem; padding: 0 0.45em; border: 1px solid rgb(228 236 240 / 0.4); font-weight: 600; color: var(--paper); }
+
+.demo-meter { display: grid; gap: 0.5rem; font-size: var(--step-small); }
+.demo-meter-top { display: flex; justify-content: space-between; gap: 1rem; font-weight: 500; }
+.demo-meter.is-closed { opacity: 0.5; }
+.demo-bar { position: relative; height: 10px; background: rgb(228 236 240 / 0.12); }
+.demo-bar span { position: absolute; inset: 0 auto 0 0; transition: width 700ms var(--ease-out); }
+.demo-bar-held { background: rgb(228 236 240 / 0.35); }
+.demo-bar-spent { background: var(--paper); }
+
+.demo-trace { display: grid; align-content: center; padding: 0 var(--pad); background: var(--black); overflow: hidden; }
+.demo-trace li {
+  display: grid; grid-template-columns: 8.5rem minmax(0, 1fr); gap: 1rem; padding: 0.75rem 0;
+  border-top: 1px solid rgb(228 236 240 / 0.1); font-size: 0.9375rem; line-height: 1.4;
+}
+.demo-trace li:first-child { border-top: 0; }
+.demo-route { font-size: var(--step-small); font-weight: 500; color: rgb(228 236 240 / 0.6); padding-top: 0.1em; }
+.demo-offers { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.demo-offers td { padding: 0.3rem 0.6rem; border-top: 1px solid rgb(228 236 240 / 0.08); }
+.demo-offers tr:first-child td { border-top: 0; }
+.demo-offers td:nth-child(2) { color: rgb(228 236 240 / 0.6); }
+.demo-offers td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.demo-offers .is-picked td { background: var(--paper); color: var(--ink); }
+.demo-ok {
+  display: inline-grid; place-items: center; width: 1.25rem; height: 1.25rem; margin-right: 0.5rem;
+  background: var(--paper); color: var(--ink); font-size: 0.75rem; font-weight: 700; vertical-align: 0.05em;
+}
+.demo-tag {
+  display: inline-block; margin-left: 0.5rem; padding: 0.1em 0.5em; vertical-align: 0.1em;
+  font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  border: 1px solid rgb(228 236 240 / 0.35); color: var(--foam);
+}
+.demo-tag-hold { border-color: var(--petrol-3); color: #8fd3ee; }
+.demo-tag-fulfilled { background: var(--paper); border-color: var(--paper); color: var(--ink); }
+
+.demo-controls { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 1.5rem; padding-top: 0.25rem; }
+.demo-fine { font-size: 0.75rem; line-height: 1.45; color: rgb(228 236 240 / 0.55); text-align: center; text-wrap: balance; }
+.demo-btn {
+  padding: 0.75rem 1.25rem; border: 1.5px solid rgb(228 236 240 / 0.4); border-radius: 0;
+  background: transparent; color: var(--paper); font: inherit; font-weight: 600; cursor: pointer;
+  transition: background var(--t-hover) ease, color var(--t-hover) ease, border-color var(--t-hover) ease;
+}
+.demo-btn.is-primary { background: var(--paper); border-color: var(--paper); color: var(--ink); }
+.demo-btn:disabled { opacity: 0.35; cursor: default; }
+@media (hover: hover) and (pointer: fine) {
+  .demo-btn:not(:disabled):not(.is-primary):hover { border-color: var(--paper); }
+  .demo-btn.is-primary:hover { background: var(--foam); }
+}
+
+@media (max-width: 900px) {
+  .interaction { min-height: 0; }
+  .demo-panel { grid-template-columns: 1fr; height: auto; }
+  .demo-trace { padding-block: 0.5rem; }
+  .demo-rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .demo-rail li:nth-child(3)::before { content: none; }
+}
+@media (max-width: 640px) {
+  .demo-trace li { grid-template-columns: 1fr; gap: 0.25rem; }
+  .demo-controls { grid-template-columns: 1fr 1fr; }
+  .demo-fine { grid-column: 1 / -1; grid-row: 2; }
+}
+
+.future { padding-bottom: clamp(5rem, 10vw, 10rem); }
 
 /* ---------- motion: masked title, tiles arriving in order, wires drawing in ---------- */
 @media (prefers-reduced-motion: no-preference) {
@@ -148,7 +263,11 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
   .js .diagram.is-drawn .dg-head, .js .diagram.is-drawn .dg-block { opacity: 1; }
   .js .dg-after .dg-wire { transition-delay: calc(500ms + var(--i, 0) * 90ms); }
   .js .diagram.is-drawn .dg-wire { stroke-dashoffset: 0; }
+
+  /* each stage's trace arrives line by line */
+  .demo-trace li { opacity: 0; transform: translateY(8px); animation: trace-in 500ms var(--ease-out) forwards; animation-delay: calc(var(--i, 0) * 110ms + 60ms); }
 }
+@keyframes trace-in { to { opacity: 1; transform: none; } }
 @keyframes line-up { to { transform: none; } }
 
 /* ---------- tablet ---------- */

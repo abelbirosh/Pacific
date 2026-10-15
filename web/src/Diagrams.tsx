@@ -213,9 +213,13 @@ export function AfterDiagram() {
   const mid = (g: Group) => g.y + groupHeight(g.items.length) / 2
   const left: number[] = [...AGENTS.map(mid), 530]
   const right: number[] = PROVIDERS.map(mid)
-  const bandTop = 58
-  const bandGap = 6
-  const bandH = (SLAB.h - bandTop - 10 - bandGap * (LAYERS.length - 1)) / LAYERS.length
+  // the four stages run the full length of the slab, under its name
+  const inset = 16
+  const bandTop = 76
+  const bandGap = 28
+  const bandH = (SLAB.h - inset - bandTop - bandGap * (LAYERS.length - 1)) / LAYERS.length
+  const bandW = SLAB.w - inset * 2
+  const center = SLAB.x + SLAB.w / 2
 
   return (
     <svg className="diagram dg-after" viewBox={`0 0 ${W} ${H}`} role="img"
@@ -235,13 +239,21 @@ export function AfterDiagram() {
       <Agents customInColumn />
       <g className="dg-slab">
         <rect x={SLAB.x} y={SLAB.y} width={SLAB.w} height={SLAB.h} />
-        <Label x={SLAB.x + 18} y={36} size={24} weight={600}>Pacific</Label>
+        <Label x={center} y={48} anchor="middle" size={24} weight={600}>Pacific</Label>
         {LAYERS.map((l, k) => {
           const y = bandTop + k * (bandH + bandGap)
           return (
             <g key={l}>
-              <rect className="dg-band" x={SLAB.x + 10} y={y} width={SLAB.w - 20} height={bandH} />
-              <Label x={SLAB.x + 24} y={y + 30} size={16} weight={600}>{l}</Label>
+              <rect className="dg-band" x={SLAB.x + inset} y={y} width={bandW} height={bandH} />
+              <g className="dg-layer-label">
+                <Label x={center} y={y + bandH / 2 + 6} anchor="middle" size={16} weight={600}>{l}</Label>
+              </g>
+              {k < LAYERS.length - 1 && (
+                <g className="dg-stage-arrow" aria-hidden="true">
+                  <path d={`M${center},${y + bandH + 4} V${y + bandH + bandGap - 7}`} />
+                  <polygon points={`${center - 4},${y + bandH + bandGap - 11} ${center},${y + bandH + bandGap - 5} ${center + 4},${y + bandH + bandGap - 11}`} />
+                </g>
+              )}
             </g>
           )
         })}
