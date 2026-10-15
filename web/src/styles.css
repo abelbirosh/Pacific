@@ -74,7 +74,7 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
   background:
     linear-gradient(0deg, var(--sea), rgb(14 23 29 / 0.85) 7%, rgb(14 23 29 / 0) 30%),
     linear-gradient(180deg, rgb(0 0 0 / 0.25), rgb(0 0 0 / 0) 18%);
-  background-color: rgb(6 36 84 / 0.55);
+  background-color: rgb(4 29 68 / 0.6);
 }
 .hero > .header, .hero-copy { position: relative; z-index: 2; }
 
