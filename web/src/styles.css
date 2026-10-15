@@ -104,6 +104,16 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .ba-word { font-size: var(--step-display); font-weight: 600; letter-spacing: -0.05em; line-height: 0.9; }
 .ba-before .ba-word { color: var(--coral); }
 
+/* Carry the board's background up into the water and ease into its first tiles. */
+@media (min-width: 1024px) {
+  .hero::after {
+    content: ''; position: absolute; inset: auto 0 0; height: 30svh; z-index: 1; pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--sea));
+  }
+  .ba-before { background: linear-gradient(to bottom, var(--sea), var(--black) 6rem); }
+  .ba-after { background: linear-gradient(to bottom, var(--sea), var(--petrol) 6rem); }
+}
+
 /* the diagrams: agents and providers are tinted panels, the tangle is coral, Pacific is the one solid thing */
 .diagram { width: 100%; height: auto; overflow: visible; }
 .diagram text { fill: var(--paper); font-family: var(--font); letter-spacing: -0.01em; }
