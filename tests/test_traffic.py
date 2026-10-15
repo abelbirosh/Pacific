@@ -21,6 +21,7 @@ def market(tmp_path_factory):
     mp.setenv("PACIFIC_SEARCH", "offline")
     mp.setenv("PACIFIC_PLATFORM_TIMEOUT", "5")
     mp.setenv("PACIFIC_DELEGATION_TIMEOUT", "60")  # a deadlock fails the run instead of hanging it
+    mp.setenv("PACIFIC_RATE_PER_S", "0")  # rate limits have their own tests; here they'd only add waiting
     with boot(tmp_path_factory.mktemp("traffic") / "home", seed=11, brain="sim") as env:
         yield env
     mp.undo()

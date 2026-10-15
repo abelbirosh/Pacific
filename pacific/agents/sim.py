@@ -27,7 +27,7 @@ from .client import MarketError
 from .personas import PERSONAS, Persona
 
 MAX_CHAIN = 6  # never hire deeper than this, whatever the persona
-TRANSIENT = {429, 500, 502, 503, 504}
+TRANSIENT = {"rate_limited", "provider_failed", "request_in_progress", "internal_error"}  # worth retrying
 PAID = ("call_service", "hire_agent")
 DELIBERATE = ("call_service", "hire_agent", "list_services", "quote")  # tool calls an LLM would pause before
 
@@ -47,6 +47,9 @@ class SimStats:
     fumbles: int = 0
     retries: int = 0
     guard_402s: int = 0
+    replays: int = 0           # retries the exchange answered from its record
+    provider_replays: int = 0  # retries a provider answered from its record (work done once)
+    key_drops: int = 0         # retries sent with a fresh key, so they could repeat the work
     errors: dict[str, int] = field(default_factory=dict)  # refusal codes seen, retries included
     hires: int = 0
     tips: float = 0.0
@@ -81,6 +84,8 @@ class PersonaTools:
     def call(self, name: str, **args):
         if name in DELIBERATE:
             self._think()
+        if name in (*PAID, "transfer") and not args.get("idempotency_key"):
+            args = {**args, "idempotency_key": self._new_key()}
         if name not in PAID:
             return self._attempt(name, args)
         if self.give_up_after is not None and self.stats.paid_calls >= self.give_up_after:
@@ -105,6 +110,10 @@ class PersonaTools:
                 return self._attempt(name, {k: v for k, v in args.items() if k != "max_cost"})
             raise
 
+    def _new_key(self) -> str:
+        """Unique for the account across runs (the job id), reproducible within one (the seed)."""
+        return f"{self.inner.client.job_id or 'wallet'}-{self.rng.getrandbits(64):016x}"
+
     def _think(self):
         pause = self.rng.expovariate(1 / self.p.think_s) if self.p.think_s > 0 else 0.0
         if pause and self.think_scale:
@@ -114,14 +123,23 @@ class PersonaTools:
         for i in range(self.p.retries + 1):
             last = i == self.p.retries
             wait = min(2.0, 0.05 * 2 ** i) * (0.5 + self.rng.random())
+            if i and args.get("idempotency_key") and self.rng.random() < self.p.sloppy:
+                # A sloppy agent retries with a fresh key, so the exchange can't tell it's a retry.
+                args = {**args, "idempotency_key": self._new_key()}
+                self.stats.key_drops += 1
             try:
-                return self.inner.call(name, **args)
+                out = self.inner.call(name, **args)
+                if getattr(out, "replayed", False):
+                    self.stats.replays += 1
+                if isinstance(getattr(out, "raw", None), dict) and out.raw.get("provider_replayed"):
+                    self.stats.provider_replays += 1
+                return out
             except MarketError as e:
                 self.stats.errors[e.code] = self.stats.errors.get(e.code, 0) + 1
-                if e.status not in TRANSIENT or last:
+                if not (e.code in TRANSIENT or e.status >= 500) or last:
                     raise
                 # A sloppy agent ignores Retry-After half the time and comes straight back.
-                if e.code == "rate_limited" and e.retry_after and self.rng.random() >= self.p.sloppy:
+                if e.retry_after and e.code in ("rate_limited", "request_in_progress") and self.rng.random() >= self.p.sloppy:
                     wait = min(10.0, e.retry_after)
             except httpx.TransportError as e:
                 if last:
@@ -364,6 +382,7 @@ class Probes:
                 ]
             if self.ctx.remaining() > 2:
                 probes.append(("sandbox_escape", None, self._sandbox_escape))
+            probes.append(("key_reuse", None, self._key_reuse))
         for name, expected, fn in probes:
             if self.rng.random() < rate:
                 self._run(name, expected, fn)
@@ -386,6 +405,35 @@ class Probes:
         r = limited[0] if limited else responses[-1]
         return r, {"ok": accepted <= bound and not crashed and all(_code(x) == "rate_limited" for x in limited),
                    "detail": f"{accepted} accepted, {len(limited)} limited in {elapsed:.2f}s (allowed {bound:.0f})"}
+
+    def _key_reuse(self):
+        """Pay for one cheap call under an Idempotency-Key, then reuse the key for a different call
+        (must be refused) and for the same call (must be replayed). Only the first may be charged."""
+        key = {"Idempotency-Key": f"probe-{self.client.job_id}-{self.rng.getrandbits(48):012x}"}
+        before = self._spent()
+        post = lambda body: self._patiently(lambda: self._post("/v1/call/ocean_storage/list", json=body, headers=key))
+        first = post({})
+        if first.status_code != 200:  # nothing final was stored (a fault): no verdict
+            return first, {"ok": True, "skipped": f"first call got {first.status_code}"}
+        other, again = post({"prefix": "x"}), post({})
+        if 429 in (other.status_code, again.status_code):
+            return other, {"ok": True, "skipped": "rate limited"}
+        charged = round(self._spent() - before, 6)
+        paid = first.json()["cost"]["wd"]
+        ok = (_code(other) == "idempotency_key_conflict" and again.headers.get("Idempotent-Replayed") == "true"
+              and again.json() == first.json() and abs(charged - paid) < 1e-9)
+        return other, {"ok": ok, "detail": f"reuse -> {_code(other)}, retry replayed="
+                                           f"{again.headers.get('Idempotent-Replayed')}, charged {charged} for {paid}"}
+
+    @staticmethod
+    def _patiently(send, tries: int = 4) -> httpx.Response:
+        """Send, waiting out Retry-After on a 429 (our own floods drain the bucket)."""
+        for _ in range(tries):
+            r = send()
+            if r.status_code != 429:
+                return r
+            time.sleep(min(10.0, float(r.headers.get("Retry-After", 1))))
+        return r
 
     def _post(self, path: str, headers: dict | None = None, **kw) -> httpx.Response:
         h = {"X-Pacific-Job": self.job} if self.job else {}

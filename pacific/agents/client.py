@@ -36,6 +36,7 @@ class Receipt:
     error: str | None
     job: dict | None
     raw: dict
+    replayed: bool = False  # the exchange answered a retry of an idempotent call from its record
 
 
 class ExchangeClient:
@@ -88,19 +89,27 @@ class ExchangeClient:
         job = self.job()
         return job["remaining"]["wd"] if job else self.me()["available"]["wd"]
 
-    def call(self, service: str, endpoint: str, body: dict, max_cost: float | None = None) -> Receipt:
+    def call(self, service: str, endpoint: str, body: dict, max_cost: float | None = None,
+             idempotency_key: str | None = None) -> Receipt:
+        """Buy one call. Pass the same `idempotency_key` when retrying it, so it runs and is
+        charged once however many times it's sent."""
         headers = {}
         if self.job_id:
             headers["X-Pacific-Job"] = self.job_id
         if max_cost is not None:
             headers["X-Pacific-Max-Cost"] = str(max_cost)
-        data = self._check(self._http.post(f"/v1/call/{service}/{endpoint}", json=body, headers=headers))
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        resp = self._http.post(f"/v1/call/{service}/{endpoint}", json=body, headers=headers)
+        data = self._check(resp)
         return Receipt(data["call_id"], service, endpoint, data["cost"]["wd"], data.get("result"),
-                       data.get("error"), data.get("job"), data)
+                       data.get("error"), data.get("job"), data, resp.headers.get("Idempotent-Replayed") == "true")
 
-    def transfer(self, to: str, amount: float, memo: str = "") -> dict:
+    def transfer(self, to: str, amount: float, memo: str = "", idempotency_key: str | None = None) -> dict:
         """Pay another account from this wallet (not from the job budget)."""
-        return self._check(self._http.post("/v1/transfer", json={"to": to, "amount": amount, "memo": memo}))
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key else {}
+        return self._check(self._http.post("/v1/transfer", json={"to": to, "amount": amount, "memo": memo},
+                                           headers=headers))
 
     def raw(self, method: str, path: str, **kw) -> httpx.Response:
         """Unchecked request, for probing how the exchange handles bad input."""

@@ -94,6 +94,7 @@ class Toolbox:
     def _register_builtin(self):
         c = self.client
         obj = lambda props, req=(): {"type": "object", "properties": props, "required": list(req)}
+        idem = {"type": "string", "description": "send the same value when retrying this call, so it runs and is charged once"}
 
         self.register(Tool(
             "discover", "The exchange's discovery document: protocol version, endpoints, error codes, "
@@ -117,22 +118,24 @@ class Toolbox:
         self.register(Tool(
             "call_service", "Buy one call to a platform service endpoint. Charged per its price plan.",
             obj({"service": {"type": "string"}, "endpoint": {"type": "string"}, "args": {"type": "object"},
-                 "max_cost": {"type": "number", "description": "refuse if worst case exceeds this"}},
+                 "max_cost": {"type": "number", "description": "refuse if worst case exceeds this"}, "idempotency_key": idem},
                 ["service", "endpoint", "args"]),
-            lambda service, endpoint, args, max_cost=None: c.call(service, endpoint, args, max_cost),
+            lambda service, endpoint, args, max_cost=None, idempotency_key=None:
+                c.call(service, endpoint, args, max_cost, idempotency_key),
             costs_money=True,
         ))
         self.register(Tool(
             "hire_agent", "Delegate a subtask to another agent's service. You pay its fee plus what it spends.",
             obj({"service": {"type": "string"}, "description": {"type": "string"},
-                 "budget": {"type": "number"}, "inputs": {"type": "object"}},
+                 "budget": {"type": "number"}, "inputs": {"type": "object"}, "idempotency_key": idem},
                 ["service", "description", "budget"]),
             self._hire, costs_money=True,
         ))
         self.register(Tool(
             "transfer", "Pay another account (e.g. tip an agent) from your wallet, not the job budget.",
-            obj({"to": {"type": "string"}, "amount": {"type": "number"}, "memo": {"type": "string"}}, ["to", "amount"]),
-            lambda to, amount, memo="": c.transfer(to, amount, memo),
+            obj({"to": {"type": "string"}, "amount": {"type": "number"}, "memo": {"type": "string"},
+                 "idempotency_key": idem}, ["to", "amount"]),
+            lambda to, amount, memo="", idempotency_key=None: c.transfer(to, amount, memo, idempotency_key),
         ))
         self.register(Tool(
             "notes_write", "Save a private note that persists across tasks (free).",
@@ -150,9 +153,11 @@ class Toolbox:
             lambda text, query, k=3: best_passages(text, query, k),
         ))
 
-    def _hire(self, service: str, description: str, budget: float, inputs: dict | None = None):
+    def _hire(self, service: str, description: str, budget: float, inputs: dict | None = None,
+              idempotency_key: str | None = None):
         inputs = {**(inputs or {}), "_chain": self.chain + [self.agent_id]}
-        return self.client.call(service, "delegate", {"description": description, "budget": budget, "inputs": inputs})
+        return self.client.call(service, "delegate", {"description": description, "budget": budget, "inputs": inputs},
+                                idempotency_key=idempotency_key)
 
     def _notes(self) -> dict:
         return json.loads(self.notes_path.read_text()) if self.notes_path.exists() else {}

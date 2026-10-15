@@ -8,6 +8,8 @@ nothing a provider stores can mint grants. A grant is good for one request:
     body  sha256 of the exact request body, so it can't carry different arguments
     ws    the workspace the provider must act in (providers take it from here, not a header)
     call  the exchange call it pays for; sub: the account paying
+    idem  (optional) the same for every retry of one idempotent call: the provider answers a
+          repeat from its record instead of redoing the work (see idempotency.py)
     exp   expiry, seconds after issue
     jti   a unique id; a provider accepts each grant once
 
@@ -76,9 +78,11 @@ class Signer:
         return cls(serialization.load_pem_private_key((home / PRIVATE).read_bytes(), password=None))
 
     def grant(self, aud: str, body: bytes, ws: str | None = None, call: str | None = None,
-              sub: str | None = None) -> str:
+              sub: str | None = None, idem: str | None = None) -> str:
         claims = {"aud": aud, "body": body_hash(body), "ws": ws, "call": call, "sub": sub,
                   "exp": time.time() + self.ttl_s, "jti": secrets.token_urlsafe(12)}
+        if idem:
+            claims["idem"] = idem  # retries of one idempotent call share this; see idempotency.py
         payload = json.dumps(claims, separators=(",", ":"), sort_keys=True).encode()
         return f"{_b64(payload)}.{_b64(self.key.sign(payload))}"
 
@@ -118,13 +122,87 @@ class Verifier:
         return claims
 
 
+def install(app, verifier: Verifier | None, cache=None) -> None:
+    """Gate a provider app: every request must carry a valid grant (else 401), and a retried
+    idempotent call (grant claim `idem`) is answered from `cache` instead of being redone.
+    Install it before the fault injector, so injected failures land outside the cache, like a
+    reply lost on the way back."""
+    app.state.grants = verifier
+    app.add_middleware(GrantGate, verifier=verifier, cache=cache)
+
+
+class GrantGate:
+    """ASGI middleware (see `install`). Leaves the verified claims in `request.state.grant`."""
+
+    def __init__(self, app, verifier: Verifier | None, cache=None):
+        self.app, self.verifier, self.cache = app, verifier, cache
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        chunks, more = [], True
+        while more:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            chunks.append(message.get("body", b""))
+            more = message.get("more_body", False)
+        body = b"".join(chunks)
+        token = next((v.decode() for k, v in scope["headers"] if k.decode().lower() == HEADER.lower()), "")
+        try:
+            if self.verifier is None:
+                raise GrantError("this provider accepts no requests")
+            claims = self.verifier.verify(token, scope["path"], body)
+        except GrantError as e:
+            return await _send_json(send, 401, {"error": "invalid_token",
+                                                "detail": f"only the Pacific exchange may call this ({e})"})
+        scope.setdefault("state", {})["grant"] = claims
+
+        replayed = False
+
+        async def replay_body():
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return await receive()
+
+        idem = claims.get("idem") if self.cache is not None else None
+        if not idem:
+            return await self.app(scope, replay_body, send)
+        key = (claims.get("ws"), idem)
+        cached = await self.cache.claim(key)
+        if cached is not None:
+            status, headers, content = cached
+            await send({"type": "http.response.start", "status": status,
+                        "headers": [*headers, (b"idempotent-replayed", b"true")]})
+            return await send({"type": "http.response.body", "body": content})
+        captured = {"status": 500, "headers": [], "body": []}
+
+        async def capture(message):
+            if message["type"] == "http.response.start":
+                captured["status"], captured["headers"] = message["status"], list(message.get("headers", []))
+            elif message["type"] == "http.response.body":
+                captured["body"].append(message.get("body", b""))
+            await send(message)
+
+        try:
+            await self.app(scope, replay_body, capture)
+        finally:
+            ok = captured["status"] < 500
+            self.cache.complete(key, (captured["status"], captured["headers"], b"".join(captured["body"])) if ok else None)
+
+
+async def _send_json(send, status: int, payload: dict):
+    content = json.dumps(payload).encode()
+    await send({"type": "http.response.start", "status": status,
+                "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(content)).encode())]})
+    await send({"type": "http.response.body", "body": content})
+
+
 async def require_grant(request: Request) -> dict:
-    """FastAPI dependency for providers: the request must carry a valid, unused grant for this
-    path and body, checked against `app.state.grants` (a Verifier). Returns its claims."""
-    verifier: Verifier | None = getattr(request.app.state, "grants", None)
-    if verifier is None:
-        raise HTTPException(401, "this provider accepts no requests")
-    try:
-        return verifier.verify(request.headers.get(HEADER, ""), request.url.path, await request.body())
-    except GrantError as e:
-        raise HTTPException(401, f"only the Pacific exchange may call this ({e})")
+    """FastAPI dependency for providers: the claims of the grant `GrantGate` verified."""
+    grant = getattr(request.state, "grant", None)
+    if grant is None:
+        raise HTTPException(401, "only the Pacific exchange may call this (no verified grant)")
+    return grant

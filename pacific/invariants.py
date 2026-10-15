@@ -13,6 +13,7 @@ delegation_bill      a hire costs fee + seller's spend at cost-plus (or just the
                      failed), capped by the hold. Checked once the child job is closed, so a
                      charge that lands on the child job after the buyer was billed shows up here
 workspace            every storage / database directory belongs to a root job or an account
+idempotent_once      no Idempotency-Key was charged for more than once
 
 The exchange adds `unhandled_error` for any exception it didn't handle (it should refuse bad
 input with a 4xx, never fall over on it).
@@ -84,6 +85,11 @@ def check(db: Database, data_dir: Path | None = None, quiescent: bool = False) -
             if c["cost"] != expected:
                 out.append({"invariant": "delegation_bill", "detail": f"{c['id']} ({c['status']}) cost {c['cost']}, "
                             f"expected {expected} from the seller's spend of {billed_for}"})
+
+        flag("idempotent_once", q(
+            "SELECT caller_id, idempotency_key, COUNT(*) AS n FROM calls WHERE idempotency_key IS NOT NULL "
+            "AND cost > 0 GROUP BY caller_id, idempotency_key HAVING n > 1"),
+            lambda r: f"{r['caller_id']} was charged {r['n']} times for key {r['idempotency_key']!r}")
 
         if data_dir is not None:
             owners = {r[0] for r in q("SELECT DISTINCT root_job_id FROM jobs")} | {r[0] for r in q("SELECT id FROM accounts")}

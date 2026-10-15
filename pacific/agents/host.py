@@ -12,7 +12,8 @@ from pydantic import BaseModel
 
 from .. import faults
 from ..config import Config
-from ..grants import Verifier, require_grant
+from ..grants import Verifier, install as gate, require_grant
+from ..idempotency import ReplayCache
 from .brain import AgentContext, Task, describe_result, make_brain
 from .client import ExchangeClient
 from .tools import Toolbox
@@ -22,8 +23,8 @@ def create_app(config: Config) -> FastAPI:
     secrets = config.secrets()
     agents: dict[str, dict] = secrets["agents"]
     app = FastAPI(title="Pacific agent host")
-    faults.install(app, faults.faults_path(config.home))
-    app.state.grants = Verifier.load(config.home)  # only the exchange may dispatch work to agents
+    gate(app, Verifier.load(config.home), ReplayCache())  # only the exchange may dispatch work to agents
+    faults.install(app, faults.faults_path(config.home))  # after the gate, so it wraps it
 
     class Work(BaseModel):
         task: dict
