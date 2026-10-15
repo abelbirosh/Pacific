@@ -124,6 +124,11 @@ class Toolbox:
             self._hire, costs_money=True,
         ))
         self.register(Tool(
+            "transfer", "Pay another account (e.g. tip an agent) from your wallet, not the job budget.",
+            obj({"to": {"type": "string"}, "amount": {"type": "number"}, "memo": {"type": "string"}}, ["to", "amount"]),
+            lambda to, amount, memo="": c.transfer(to, amount, memo),
+        ))
+        self.register(Tool(
             "notes_write", "Save a private note that persists across tasks (free).",
             obj({"key": {"type": "string"}, "text": {"type": "string"}}, ["key", "text"]),
             self._notes_write,

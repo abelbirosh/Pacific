@@ -4,74 +4,12 @@ Network-free by default (database, sandbox, storage, delegation). Set PACIFIC_NE
 also exercise the live web search tiers and OSV dependency audits.
 """
 
-import asyncio
-import json
 import os
-import socket
-import threading
-import time
 
 import httpx
 import pytest
-import uvicorn
 
-from pacific.config import Config
-
-
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
-@pytest.fixture(scope="module")
-def economy(tmp_path_factory):
-    from pacific.agents.host import create_app as agents_app
-    from pacific.exchange.app import create_app as exchange_app
-    from pacific.seed import genesis
-    from pacific.services.app import create_app as services_app
-
-    config = Config(home=tmp_path_factory.mktemp("pacific") / "home", exchange_port=free_port(),
-                    services_port=free_port(), agents_port=free_port())
-    genesis(config, seed=1)
-    secrets = config.secrets()
-    servers = [
-        uvicorn.Server(uvicorn.Config(exchange_app(config), port=config.exchange_port, log_level="error")),
-        uvicorn.Server(uvicorn.Config(services_app(config.data_dir, secrets["gateway_secret"]),
-                                      port=config.services_port, log_level="error")),
-        uvicorn.Server(uvicorn.Config(agents_app(config), port=config.agents_port, log_level="error")),
-    ]
-    async def serve_all():
-        await asyncio.gather(*(s.serve() for s in servers))
-
-    thread = threading.Thread(target=lambda: asyncio.run(serve_all()), daemon=True)
-    thread.start()
-    deadline = time.time() + 15
-    while not all(s.started for s in servers):
-        assert time.time() < deadline, "servers did not start"
-        time.sleep(0.05)
-    admin = httpx.Client(base_url=config.exchange_url, timeout=300,
-                         headers={"Authorization": f"Bearer {secrets['admin_key']}"})
-    yield config, secrets, admin
-    for s in servers:
-        s.should_exit = True
-    thread.join(timeout=5)
-
-
-def run_task(admin, spec: dict) -> dict:
-    task = admin.post("/v1/tasks", json=spec).raise_for_status().json()
-    return admin.post(f"/v1/tasks/{task['id']}/run").raise_for_status().json()
-
-
-def agent_with(secrets, skill=None, without=None):
-    for aid, a in secrets["agents"].items():
-        if (skill is None or skill in a["skills"]) and (without is None or without not in a["skills"]):
-            return aid, a
-    pytest.skip(f"no agent with={skill} without={without} for this seed")
-
-
-def load(name: str) -> dict:
-    return json.loads(open(os.path.join(os.path.dirname(__file__), "..", "tasks", name)).read())
+from support import agent_with, load, run_task
 
 
 def test_genesis_shape(economy):
@@ -149,3 +87,18 @@ def test_research_and_security_live(economy):
     assert run_task(admin, {**load("research.json"), "agent": aid})["status"] == "passed"
     assert run_task(admin, {**load("research_cheap.json"), "agent": aid})["status"] == "passed"
     assert run_task(admin, {**load("security.json"), "agent": aid})["status"] == "passed"
+
+
+def test_unpriceable_requests_are_refused_not_crashed(economy):
+    config, secrets, admin = economy
+    (buyer, b), (seller, _) = list(secrets["agents"].items())[:2]
+    offering = secrets["agents"][seller]["offerings"][0]
+    task = admin.post("/v1/tasks", json={**load("code_run.json"), "agent": buyer}).json()
+    post = lambda path, **kw: httpx.post(f"{config.exchange_url}{path}", **kw, headers={
+        "Authorization": f"Bearer {b['key']}", "X-Pacific-Job": task["workspace"], "Content-Type": "application/json"})
+    for budget in (b"1e999", b"true", b'"5"', b"-1"):
+        r = post(f"/v1/call/{offering}/delegate", content=b'{"description": "x", "budget": ' + budget + b"}")
+        assert r.status_code == 400, (budget, r.text)
+    r = post("/v1/call/ocean_db/execute_many", json={"db": "x", "sql": "SELECT 1", "rows": 5})
+    assert r.status_code == 400, r.text
+    assert admin.get("/v1/admin/audit").json()["active_holds"] == 0

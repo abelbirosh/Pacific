@@ -75,6 +75,7 @@ Genesis creates 5 agents with random names. Each is owned by a randomly generate
 A brain (`pacific/agents/brain.py`) implements `run(task, ctx) -> BrainResult`. It gets a toolbox (`pacific/agents/tools.py`) that contains:
 - free internal tools: `budget_status`, `list_services`, `quote`, `notes_write`/`notes_read` (memory that persists across tasks), `extract_passages`
 - paid market tools: `call_service`, `hire_agent`
+- `transfer`: pay another account from the agent's wallet (outside the job budget), e.g. a tip
 
 Every tool has a JSON schema (`toolbox.specs()`), so an LLM brain can take them as tool definitions directly. To plug one in, write a class with `run()`, register it in `BRAINS`, and set an agent's `brain` in `.pacific/secrets.json`.
 
@@ -83,6 +84,27 @@ The included **`ScriptedBrain`** is a deterministic stub that still makes budget
 - code_run: shrinks the sandbox timeout until the worst case fits the budget
 - delegation: when it lacks a skill (or `inputs.delegate` is set), it hires the cheapest agent selling that skill and passes along most of its remaining budget. It never hires an agent already in the delegation chain.
 - `inputs.steps`: runs a multi-step plan and delegates per step
+
+**`SimBrain`** (`pacific/agents/sim.py`) runs the same routines, but makes its choices the way a population of imperfect LLM agents would, using a **persona** (`pacific/agents/personas.py`) and an RNG seeded from `inputs._seed`, so any run can be replayed:
+
+| Persona | Behaviour |
+|---|---|
+| `careful` | browses the catalog, quotes nearly every call, guards spend with `X-Pacific-Max-Cost` |
+| `frugal` | cheapest search tier and seller, short sandbox timeouts, hands hired agents small budgets |
+| `spendthrift` | premium tier, priciest seller, never quotes |
+| `delegator` | hires out work it could do itself, builds chains up to 4 deep, tips sellers |
+| `sloppy` | sends a malformed call first (typo'd endpoint, missing or mistyped arg), misjudges max cost, retries, sometimes quits |
+| `quitter` | abandons about a third of its tasks after 0-2 paid calls |
+| `adversary` | probes the exchange: overspending, hijacking a parent job, self-dealing, admin endpoints, path traversal, malformed bodies, non-finite budgets, hiring its own buyers (cycles) |
+
+Each probe must be refused with the expected status and must not move the job's spend; one that isn't is listed under `artifacts.sim.violations` and in the task output. The task report's `artifacts.sim` also records the seed, decisions, quotes, fumbles, retries, hires and tips.
+
+```bash
+uv run pacific init --brain sim            # deal the personas out across the agents
+uv run pacific init --brain sim:sloppy     # or give every agent one persona
+```
+
+A task can override the agent's persona with `inputs._persona`. `PACIFIC_THINK_SCALE` scales each persona's pause before a decision (default 1; set 0 for fast tests).
 
 ## Task format
 
@@ -118,12 +140,12 @@ Auth uses `Authorization: Bearer <key>`. Keys live in `.pacific/secrets.json`, w
 ## Tests
 
 ```bash
-uv run pytest                          # ledger, pricing, and a full economy booted on free ports
+uv run pytest                          # ledger, pricing, a full economy booted on free ports, every sim persona
 PACIFIC_NET_TESTS=1 uv run pytest      # also live search tiers + OSV audits
 ```
 
 ## Known limits
 
-- The sandbox enforces resource limits but is **not** a security boundary: code runs as your user with network access. Put it in a container or VM before untrusted (e.g. LLM-driven) agents use it.
+- The sandbox enforces resource limits but is **not** a security boundary: code runs as your user with network access, and can read the exchange's `secrets.json` (the adversary persona's `sandbox_reads_host` probe shows this). Put it in a container or VM before untrusted (e.g. LLM-driven) agents use it.
 - Search quality depends on public APIs and their rate limits. A source that fails is reported in `source_errors`, and the call doesn't fail as long as any source succeeds.
 - Everything runs on one machine against one SQLite ledger. The service boundaries are real HTTP, so splitting them out later is mostly deployment work.

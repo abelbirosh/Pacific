@@ -15,6 +15,7 @@ land in the root job's workspace, so checks can find them.
 
 
 import json
+import math
 import secrets as pysecrets
 import time
 from contextlib import asynccontextmanager
@@ -120,6 +121,12 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                                            req.fee, req.markup_pct, config.agents_url)
         return {"service": name}
 
+    def _price(plan, body: dict) -> int:
+        try:
+            return plan.max_cost(body)
+        except (TypeError, ValueError, ArithmeticError) as e:
+            raise HTTPException(400, f"can't price this request: {type(e).__name__}: {e}")
+
     @app.post("/v1/quote/{service}/{endpoint}")
     async def quote(service: str, endpoint: str, request: Request):
         ep = registry.endpoint(service, endpoint)
@@ -127,7 +134,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
             raise HTTPException(404, f"no endpoint {service}/{endpoint}")
         body = await _json(request)
         plan = registry.plan(ep)
-        return {"max_cost": money(plan.max_cost(body)), "floor": money(to_micro(plan.per_call)), "price": plan.describe()}
+        return {"max_cost": money(_price(plan, body)), "floor": money(to_micro(plan.per_call)), "price": plan.describe()}
 
     # ---- money movement ---------------------------------------------------------------------
 
@@ -188,10 +195,12 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
             job = ledger.job_status(x_pacific_job)
             if job["account_id"] != acct["id"]:
                 raise HTTPException(403, "that job belongs to another account")
-        if svc["kind"] == "agent" and not (isinstance(body.get("budget"), (int, float)) and body["budget"] > 0):
+        budget = body.get("budget")
+        if svc["kind"] == "agent" and not (isinstance(budget, (int, float)) and not isinstance(budget, bool)
+                                           and math.isfinite(budget) and budget > 0):
             raise HTTPException(400, "delegation needs a positive `budget` for the hired agent")
 
-        hold_amount = plan.max_cost(body)
+        hold_amount = _price(plan, body)
         if x_pacific_max_cost is not None and hold_amount > to_micro(x_pacific_max_cost):
             raise HTTPException(402, f"worst-case cost {fmt(hold_amount)} exceeds your max {x_pacific_max_cost} WD")
 
@@ -248,7 +257,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                     cost, payload = passthrough, data
                     error = data.get("detail") or data.get("output") or "delegated task failed"
                     http_status = 200 if resp.is_success else http_status
-        except (httpx.HTTPError, ValueError) as e:
+        except Exception as e:  # whatever went wrong, the hold below must still be settled
             error = f"provider unreachable or bad response: {type(e).__name__}: {e}"
             if child:  # whatever the hired agent already spent is still owed at cost
                 with db.tx() as conn:
@@ -343,9 +352,10 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
             final = "passed" if all(c["passed"] for c in checks) and result.get("status") == "completed" else "failed"
         with db.tx() as conn:
             conn.execute(
-                "UPDATE tasks SET status=?, output=?, trace=?, checks=?, "
+                "UPDATE tasks SET status=?, output=?, trace=?, checks=?, artifacts=?, "
                 "finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
-                (final, result.get("output"), json.dumps(result.get("trace", [])), json.dumps(checks), task_id),
+                (final, result.get("output"), json.dumps(result.get("trace", [])), json.dumps(checks),
+                 json.dumps(result.get("artifacts") or {}), task_id),
             )
         return task_report(task_id)
 
@@ -371,6 +381,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
             "remaining": money(job["budget"] - job["spent"]), "workspace": job["root_job_id"],
             "spend_by_service": by_service, "checks": json.loads(task["checks"] or "[]"),
             "output": task["output"], "trace": json.loads(task["trace"] or "[]"), "calls": calls,
+            "artifacts": json.loads(task["artifacts"] or "{}"),
             "spec": json.loads(task["spec"]), "created_at": task["created_at"], "finished_at": task["finished_at"],
         }
 

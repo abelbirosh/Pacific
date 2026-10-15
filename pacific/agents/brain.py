@@ -308,15 +308,21 @@ ROUTINES: dict[str, Callable[[Task, AgentContext], BrainResult]] = {
     "code_run": code_run,
 }
 
-BRAINS: dict[str, Callable[[], Brain]] = {"scripted": ScriptedBrain}
+BRAINS: dict[str, Callable[..., Brain]] = {"scripted": ScriptedBrain}
 
 
 def make_brain(name: str) -> Brain:
-    try:
-        return BRAINS[name]()
-    except KeyError:
-        raise ValueError(f"unknown brain {name!r}; available: {sorted(BRAINS)}") from None
+    """`name` is a brain, optionally with an argument: "scripted", "sim", "sim:frugal"."""
+    base, _, arg = name.partition(":")
+    if base not in BRAINS:
+        raise ValueError(f"unknown brain {name!r}; available: {sorted(BRAINS)}")
+    return BRAINS[base](arg) if arg else BRAINS[base]()
 
 
 def describe_result(result: BrainResult) -> dict:
     return {"status": result.status, "output": result.output, "artifacts": json.loads(json.dumps(result.artifacts, default=str))}
+
+
+from .sim import SimBrain  # noqa: E402  (sim builds on the routines above)
+
+BRAINS["sim"] = SimBrain

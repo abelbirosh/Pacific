@@ -61,17 +61,18 @@ def cmd_init(args, config: Config):
     from .seed import genesis
 
     try:
-        out = genesis(config, seed=args.seed, supply=args.supply, force=args.force)
-    except RuntimeError as e:
+        out = genesis(config, seed=args.seed, supply=args.supply, force=args.force, brain=args.brain)
+    except (RuntimeError, ValueError) as e:
         sys.exit(str(e))
     s = out["secrets"]
     print(f"Genesis complete at {config.home}")
     print(f"Supply minted: {wd(args.supply)} WD   audit ok: {out['audit']['ok']}\n")
     rows = [
-        {"agent": a["name"], "owner": s["people"][a["owner"]]["name"], "skills for hire": ", ".join(a["skills"])}
+        {"agent": a["name"], "owner": s["people"][a["owner"]]["name"], "skills for hire": ", ".join(a["skills"]),
+         "brain": a["brain"]}
         for a in s["agents"].values()
     ]
-    print(table(rows, ["agent", "owner", "skills for hire"]))
+    print(table(rows, ["agent", "owner", "skills for hire", "brain"]))
     print("\nNext: `pacific serve`, then `pacific status` or `pacific task run tasks/research.json`.")
 
 
@@ -220,6 +221,8 @@ def main(argv: list[str] | None = None):
     s.add_argument("--seed", type=int, help="RNG seed for reproducible names/skills/prices")
     s.add_argument("--supply", type=float, default=1_000_000, help="wave dollars to mint")
     s.add_argument("--force", action="store_true", help="wipe an existing economy")
+    s.add_argument("--brain", default="scripted",
+                   help='every agent\'s brain: "scripted", "sim" (a mix of personas) or "sim:<persona>"')
     s.set_defaults(fn=cmd_init)
 
     s = sub.add_parser("serve", help="run the exchange, platform services and agent host")
