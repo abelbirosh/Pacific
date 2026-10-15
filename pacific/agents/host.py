@@ -11,6 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 
 from .. import faults
+from ..auth import Credentials, DPoPAuth
 from ..config import Config
 from ..grants import Verifier, install as gate, require_grant
 from ..idempotency import ReplayCache
@@ -40,7 +41,11 @@ def create_app(config: Config) -> FastAPI:
         if delegated:
             task.skill = task.skill or work.skill
             task.title = task.title or f"subtask for {work.buyer_id}"
-        client = ExchangeClient(config.exchange_url, agent["key"], job_id=work.job_id)
+        # The brain only ever holds a short-lived token, bound to the agent's key and limited to
+        # this job; a hired agent can't touch its wallet (no transfer scope).
+        scope = "pacific:read pacific:spend pacific:hire" + ("" if delegated else " pacific:transfer")
+        auth = DPoPAuth(Credentials.load(config.home, agent_id), scope=scope, resource=f"job:{work.job_id}")
+        client = ExchangeClient(config.exchange_url, job_id=work.job_id, auth=auth)
         tools = Toolbox(client, config.home / "agents" / agent_id / "notes.json", agent_id,
                         chain=list(task.inputs.get("_chain", [])))
         ctx = AgentContext(agent_id, agent["name"], agent["skills"], tools)

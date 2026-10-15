@@ -86,6 +86,9 @@ def genesis(config: Config, seed: int | None = None, supply: float = 1_000_000, 
             secrets["agents"][agent] = {"name": aname, "key": akey, "owner": person, "skills": skills,
                                         "brain": agent_brain, "offerings": offerings}
 
+    from .exchange.identity import Identity  # every agent and person gets a key pair; every agent a mandate
+
+    Identity(db, ledger, config.home, secrets["admin_key"]).ensure_keys_and_mandates()
     config.secrets_path.write_text(json.dumps(secrets, indent=2))
     config.secrets_path.chmod(0o600)
     audit = ledger.audit()

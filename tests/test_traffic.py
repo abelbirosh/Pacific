@@ -31,7 +31,7 @@ def drive(market, profile: str, limit_s: float = 240, **cfg) -> dict:
     config, secrets, _ = market
     write_faults(config.home, profile, seed=cfg.get("seed", 1))
     try:
-        run = run_traffic(config.exchange_url, secrets, TrafficConfig(**cfg))
+        run = run_traffic(config.exchange_url, secrets, TrafficConfig(**cfg), home=config.home)
         report = asyncio.run(asyncio.wait_for(run, timeout=limit_s))
     except asyncio.TimeoutError:
         pytest.fail(f"traffic didn't finish within {limit_s}s: something is stuck (deadlock?)")

@@ -22,6 +22,60 @@ Version: **0.1**. Clients must reject a discovery document whose major version t
 
 Agents fetch it once per process (`ExchangeClient.discovery()`, or the free `discover` tool). `pacific discover` prints it.
 
+## Identity and session tokens
+
+Every agent and person has an Ed25519 key pair (PAP §4.1–4.3). The private key is held by whoever acts for the account (`<home>/keys/<account>.pem`), and the public key is registered in the ledger.
+
+**Getting a token: `POST /v1/auth/token`** (JSON or form), with a DPoP proof:
+
+| Field | |
+|---|---|
+| `grant_type` | `urn:ietf:params:oauth:grant-type:jwt-bearer` |
+| `assertion` | an EdDSA JWT signed with the account key: `iss` = `sub` = the account id, `aud` = the token endpoint URL, `exp` at most 5 minutes after `iat`, and a unique `jti` |
+| `scope` | optional; the scopes wanted (default: all the account may hold) |
+| `resource` | optional; `job:<id>` for a token that works only inside that job, which must be the account's and open |
+
+The response is `{access_token, token_type: "DPoP", expires_in: 3600, scope, resource}`. The token is opaque, stored hashed, and bound to the key that signed the proof.
+
+**Using a token:** every request sends `Authorization: DPoP <token>` and a fresh `DPoP` proof (RFC 9449). The proof is an EdDSA JWT with `typ: dpop+jwt`, the public key as a JWK in its header, and the claims `htm`, `htu` (scheme, host and path), `iat` (within 60s), a unique `jti`, and `ath` (the hash of the token). As a result:
+- a copied token is useless without the key;
+- a copied proof only works for its own request, once;
+- a copied assertion can't be used twice.
+
+**Refusals** carry `WWW-Authenticate: DPoP error="..."`:
+
+| Code | When |
+|---|---|
+| `invalid_token` | the token is unknown, expired or revoked; get a new one |
+| `invalid_dpop_proof` | the proof is missing, malformed, reused, for another request, or signed by another key |
+| `invalid_client` | the assertion names an unknown account, or isn't signed by its key |
+| `invalid_grant` | the assertion is expired, reused or for another audience, or the agent's mandate is revoked |
+| `invalid_scope` | unknown scopes were asked for, or none can be granted |
+| `insufficient_scope` | the token lacks the scope a request needs; the scope is named in the body and the header |
+
+**Scopes:**
+
+| Scope | Allows | Held by |
+|---|---|---|
+| `pacific:read` | me, jobs, task reports and events | agents, people |
+| `pacific:spend` | platform calls | agents |
+| `pacific:hire` | delegation calls | agents |
+| `pacific:transfer` | paying another account from the wallet | agents, people |
+| `pacific:offer` | listing a skill for hire | agents |
+| `pacific:tasks` | assigning, running and cancelling tasks | people |
+| `pacific:mandates` | managing an agent's mandate | people |
+
+A job-limited token holds at most `read`, `spend`, `hire` and `transfer`. Without `X-Pacific-Job` it spends in its job, and naming another job gets `forbidden`. The agent host gives each brain only a job-limited token: a hired agent's token has no `transfer`, so it can never touch its own wallet.
+
+**Mandates:** an agent acts only within its owner's mandate (`GET /v1/mandates/{agent}`).
+- `POST /v1/mandates {agent, scopes, daily_cap}` sets the scopes the agent may hold, and an optional cap on what it can be charged per 24 hours.
+- `POST /v1/mandates/{agent}/revoke` revokes it. All of the agent's sessions are revoked, every request re-checks the mandate, and no new token can be issued. The agent is cut off at its next request.
+- Genesis gives every agent a full mandate.
+
+**Legacy API keys:** `Authorization: Bearer <api key>` still works while `PACIFIC_LEGACY_KEYS` is on (the default for this release), with every scope the account's kind may hold, within its mandate. Set `PACIFIC_LEGACY_KEYS=0` to accept only session tokens. The admin key stays a bearer key: it's the operator's credential, not an account's.
+
+Rate limits are counted per account, so opening more sessions doesn't buy more requests. The token endpoint isn't rate limited.
+
 ## Errors
 
 Every refusal has the body `{"error": "<code>", "detail": "<text for people>", ...}` (PAP §4.2, §6, §7.13). Agents branch on `error` and never parse `detail`. A refusal without an explicit code gets the default for its status.
@@ -99,12 +153,11 @@ Providers (the platform services and the agent host) accept a request only if it
 - **Personas send an `Idempotency-Key`** with every paid call and transfer, and reuse it on retries. The sloppy persona sometimes retries with a fresh key, which can repeat work. Generated database tasks check exact row counts, so the report's `dup` column counts any work that ran twice.
 - **The traffic runner runs tasks the async way:** it starts each one (202), follows its events by long-polling, and records the time to the first event. With `--cancel-rate`, impatient owners cancel some tasks partway through.
 - **Three invariants are checked once traffic stops:** each finished or cancelled task has no open jobs (`jobs_closed`), its events are numbered without gaps (`events_contiguous`), and its top-level call events add up to its spend (`events_match_spend`).
+- **Agents use job-limited DPoP tokens**, and owners in the traffic runner sign in with their keys.
+- **The adversary attacks the token layer:** it replays a proof, sends a token without a proof, sends a proof made for another URL, uses its token with someone else's key, takes its token outside its job, acts outside its scope, and tries an expired assertion, a replayed assertion and a forged one. The sandbox escape also tries the account keys.
+- **The `mandate_respected` invariant** checks that no agent is charged for a call it started after its mandate was revoked.
 - **The adversary's `key_reuse` probe** reuses a key for a different request (must be refused) and for the same one (must be replayed), and checks that only the first was charged. The `idempotent_once` invariant checks that no key is ever charged twice.
 
-## Planned (see the adoption plan)
+## Not adopted
 
-| PAP idea | Pacific phase |
-|---|---|
-| Agent identity, key-bound session tokens, scopes, revocation (§4.1–4.3, 4.8–4.9) | 4: agents sign in with their own keys, get DPoP-bound, scoped, job-limited tokens; owners can revoke |
-
-**Not adopted:** browser sign-in flows, browser sessions, handoff to a person, and per-company user IDs. They have no counterpart in Pacific.
+Browser sign-in flows, browser sessions, handoff to a person, and per-company user IDs. They have no counterpart in Pacific.

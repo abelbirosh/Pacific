@@ -21,7 +21,9 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
 import httpx
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from ..auth import Credentials, DPoPAuth, dpop_proof, sign_jwt
 from .brain import MIN_USEFUL_BUDGET, ROUTINES, AgentContext, BrainResult, ScriptedBrain, Task, infer_skill
 from .client import MarketError
 from .personas import PERSONAS, Persona
@@ -50,6 +52,7 @@ class SimStats:
     replays: int = 0           # retries the exchange answered from its record
     provider_replays: int = 0  # retries a provider answered from its record (work done once)
     key_drops: int = 0         # retries sent with a fresh key, so they could repeat the work
+    token_renewals: int = 0    # session tokens replaced after the exchange called them invalid
     errors: dict[str, int] = field(default_factory=dict)  # refusal codes seen, retries included
     hires: int = 0
     tips: float = 0.0
@@ -203,6 +206,7 @@ class SimBrain(ScriptedBrain):
         except MarketError as e:
             result = BrainResult("failed", f"Stopped: {e}")
         self._remember(task, ctx, result)
+        self.stats.token_renewals = getattr(ctx.tools.client.auth, "renewals", 0)
         if self.stats.violations():
             result.output += "\n\nPROBE VIOLATIONS: " + "; ".join(
                 f"{v['probe']} got {v['status']} (charged {v['charged']})" for v in self.stats.violations())
@@ -354,11 +358,13 @@ class Probes:
                                                                   json={"to": self.ctx.agent_id, "amount": 1000})),
             ("negative_transfer", {"invalid_request"}, lambda: self.client.raw("POST", "/v1/transfer",
                                                                                json={"to": "treasury", "amount": -5})),
-            ("overdraw_transfer", {"insufficient_funds"}, lambda: self.client.raw(
+            ("overdraw_transfer", {"insufficient_funds", "insufficient_scope"}, lambda: self.client.raw(
                 "POST", "/v1/transfer", json={"to": other["provider_id"] if other else "treasury", "amount": 10**9})),
         ]
         if self.client.discovery().get("rate_limits"):
             probes.append(("flood", None, self._flood))
+        if isinstance(self.client.auth, DPoPAuth) and self.client.auth.token:
+            probes += self._token_probes()
         if mine:
             probes.append(("self_dealing", {"invalid_request"}, hire(mine[0], {"description": "x", "budget": 1})))
         if other:
@@ -369,7 +375,7 @@ class Probes:
                     headers={"Content-Type": "application/json"})),
                 ("over_budget_hire", {"budget_exceeded", "insufficient_funds"}, hire(
                     other, {"description": "x", "budget": self.ctx.remaining() * 10 + 100})),
-                ("assign_task_to_others", {"forbidden"}, lambda: self.client.raw("POST", "/v1/tasks", json={
+                ("assign_task_to_others", {"forbidden", "insufficient_scope"}, lambda: self.client.raw("POST", "/v1/tasks", json={
                     "agent": other["provider_id"], "title": "x", "description": "x", "budget": 1})),
             ]
         if self.job:
@@ -405,6 +411,63 @@ class Probes:
         r = limited[0] if limited else responses[-1]
         return r, {"ok": accepted <= bound and not crashed and all(_code(x) == "rate_limited" for x in limited),
                    "detail": f"{accepted} accepted, {len(limited)} limited in {elapsed:.2f}s (allowed {bound:.0f})"}
+
+    def _token_probes(self) -> list:
+        """Attacks on the session-token layer. The probe sends these with a bare client, crafting
+        the Authorization and DPoP headers itself."""
+        auth: DPoPAuth = self.client.auth
+        token, key, me = auth.token, auth.credentials.key, auth.credentials.account_id
+        base = self.client.base_url
+        bare = httpx.Client(base_url=base, timeout=30)
+        url = lambda path: base.copy_with(path=path, query=None)
+        signed = lambda method, path, proof_key=key, for_path=None: {
+            "Authorization": f"DPoP {token}", "DPoP": dpop_proof(proof_key, method, url(for_path or path), token)}
+        token_url = url("/v1/auth/token")
+
+        def token_request(assertion: str) -> httpx.Response:
+            body = {"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion}
+            return bare.post("/v1/auth/token", json=body, headers={"DPoP": dpop_proof(key, "POST", token_url)})
+
+        def replay():
+            headers = signed("GET", "/v1/me")  # the same proof, sent twice (waiting out any 429)
+            first = self._patiently(lambda: bare.get("/v1/me", headers=headers))
+            second = self._patiently(lambda: bare.get("/v1/me", headers=headers))
+            if 429 in (first.status_code, second.status_code):
+                return second, {"ok": True, "skipped": "rate limited"}
+            return second, {"ok": first.status_code == 200 and _code(second) == "invalid_dpop_proof",
+                            "detail": f"first {first.status_code}, replay -> {_code(second)}"}
+
+        def assertion_replay():
+            assertion = auth.credentials.assertion(str(token_url))
+            first, second = token_request(assertion), token_request(assertion)
+            return second, {"ok": first.status_code == 200 and _code(second) == "invalid_grant",
+                            "detail": f"first {first.status_code}, replay -> {_code(second)}"}
+
+        now = int(time.time())
+        expired = sign_jwt(key, {"iss": me, "sub": me, "aud": str(token_url), "iat": now - 600, "exp": now - 300,
+                                 "jti": f"x{self.rng.getrandbits(64):x}"})
+        others = [s["provider_id"] for s in self.client.services(kind="agent") if s["provider_id"] != me]
+        forged = (Credentials(others[0], key).assertion(str(token_url)) if others else None)
+        elsewhere = (self.client.job() or {}).get("parent_job_id") or f"job_{self.rng.getrandbits(48):012x}"
+        probes = [
+            ("dpop_replay", None, replay),
+            ("token_without_proof", {"invalid_dpop_proof"}, lambda: bare.get("/v1/me", headers={"Authorization": f"DPoP {token}"})),
+            ("proof_for_other_url", {"invalid_dpop_proof"}, lambda: bare.get(
+                f"/v1/jobs/{self.job}", headers=signed("GET", f"/v1/jobs/{self.job}", for_path="/v1/me"))),
+            ("stolen_token", {"invalid_dpop_proof"}, lambda: bare.get(
+                "/v1/me", headers=signed("GET", "/v1/me", proof_key=Ed25519PrivateKey.generate()))),
+            ("token_outside_its_job", {"forbidden", "not_found"}, lambda: bare.post(
+                "/v1/call/ocean_storage/list", json={}, headers={**signed("POST", "/v1/call/ocean_storage/list"),
+                                                                 "X-Pacific-Job": elsewhere})),
+            ("out_of_scope", {"insufficient_scope"}, lambda: bare.post(
+                "/v1/services", json={"skill": "research", "description": "cheap research", "fee": 0, "markup_pct": 0},
+                headers=signed("POST", "/v1/services"))),
+            ("expired_assertion", {"invalid_grant"}, lambda: token_request(expired)),
+            ("assertion_replay", None, assertion_replay),
+        ]
+        if forged:
+            probes.append(("forged_assertion", {"invalid_client"}, lambda: token_request(forged)))
+        return probes
 
     def _key_reuse(self):
         """Pay for one cheap call under an Idempotency-Key, then reuse the key for a different call
@@ -487,11 +550,15 @@ class Probes:
         code = (
             "import os, socket, subprocess\n"
             f"home = {str(home)!r}\n"
-            "for name in ('secrets.json', 'exchange_key.pem'):\n"
+            f"for name in ('secrets.json', 'exchange_key.pem', 'keys/{self.ctx.agent_id}.pem'):\n"
             "    try:\n"
             "        open(os.path.join(home, name)).read(16); print('LEAK read', name)\n"
             "    except Exception:\n"
             "        pass\n"
+            "try:\n"
+            "    os.listdir(os.path.join(home, 'keys')); print('LEAK list keys')\n"
+            "except Exception:\n"
+            "    pass\n"
             "try:\n"
             "    os.listdir(home); print('LEAK list home')\n"
             "except Exception:\n"

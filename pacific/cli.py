@@ -147,7 +147,7 @@ def cmd_sim(args, config: Config):
     def drive(econ: Config) -> dict:
         write_faults(econ.home, args.faults, seed=args.seed)
         try:
-            return asyncio.run(run_traffic(econ.exchange_url, econ.secrets(), cfg, progress))
+            return asyncio.run(run_traffic(econ.exchange_url, econ.secrets(), cfg, progress, home=econ.home))
         finally:
             write_faults(econ.home, "none")
 
@@ -208,11 +208,19 @@ def cmd_fund(args, config: Config):
 
 
 def cmd_call(args, config: Config):
-    """Make a raw purchase as an agent, outside any task (handy for poking at services)."""
-    _, key = agent_key(config, args.agent)
-    api = Api(config, key=key)
+    """Make a raw purchase as an agent, outside any task (handy for poking at services). Signs in
+    with the agent's key and uses a DPoP session token."""
+    from .agents.client import ExchangeClient, MarketError
+    from .auth import Credentials, DPoPAuth
+
+    agent_id, _ = agent_key(config, args.agent)
+    client = ExchangeClient(config.exchange_url, auth=DPoPAuth(Credentials.load(config.home, agent_id)))
     body = json.loads(args.body) if args.body else {}
-    print(json.dumps(api("POST", f"/v1/call/{args.service}/{args.endpoint}", json=body), indent=2)[: args.max_chars])
+    try:
+        receipt = client.call(args.service, args.endpoint, body)
+    except MarketError as e:
+        sys.exit(f"refused: {e}")
+    print(json.dumps(receipt.raw, indent=2)[: args.max_chars])
 
 
 def print_report(r: dict):
