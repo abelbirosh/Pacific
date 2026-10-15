@@ -14,6 +14,7 @@ from fastapi import HTTPException
 CODES: dict[str, tuple[int, str]] = {
     "invalid_request": (400, "the request is malformed or breaks a rule"),
     "unpriceable": (400, "the exchange can't work out a worst-case price for these arguments"),
+    "invalid_cursor": (400, "the event cursor is unknown or belongs to another task"),
     "invalid_token": (401, "missing, unknown or expired credentials"),
     "insufficient_funds": (402, "the wallet can't cover the worst-case cost"),
     "budget_exceeded": (402, "the job's remaining budget can't cover the worst-case cost, or the job is closed"),

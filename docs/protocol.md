@@ -65,6 +65,26 @@ The key also reaches the provider. The exchange signs a stable id derived from t
 
 Without a key, a retry after a lost reply does the work again. For example, an `execute_many` inserts its rows twice.
 
+## Tasks run in the background, with an event log
+
+`POST /v1/tasks/{id}/run` returns `202 {"status": "running"}` at once (PAP §7.5–7.7). With `?wait=N`, it holds the request for up to N seconds and returns the full report (200) if the task finished by then. Leaving doesn't stop the task.
+
+`GET /v1/tasks/{id}/events?cursor=&wait=` returns what happened after `cursor`, in order. It holds the request for up to `wait` seconds (at most 60) until there is something new. Every response includes `cursor`, `has_more` and the task's `status`. Event types:
+
+| Type | Fields |
+|---|---|
+| `state` | `status`: running, checking, then passed, failed, error or cancelled |
+| `hire` | a call anywhere in the task's job tree hired an agent: `service`, `buyer`, `seller`, `budget`, `depth` |
+| `call` | a call anywhere in the task's job tree settled: `service`, `endpoint`, `caller`, `status`, `cost`, `depth` |
+| `output` | the agent's final output: `status`, `text` (first 2,000 characters), `truncated` |
+| `check` | one completion check: `check`, `passed`, `detail` |
+
+- **Streaming:** with `Accept: text/event-stream`, the same events stream as server-sent events (`id:` is the cursor). Reconnect with `Last-Event-ID`.
+- **Cursors:** event ids are cursors and are opaque. An unknown cursor gets 400 `invalid_cursor`.
+- **Cancel:** `POST /v1/tasks/{id}/cancel` closes the task's whole job tree, so nothing new can be reserved in it. Calls already in flight finish and settle. Cancelling a finished task changes nothing.
+- **Who can see a task:** the admin, the agent's owner and the agent itself can read a task and its events. Only the admin and the owner can run or cancel it.
+- **Restart:** a task cut off by an exchange restart is marked `error` at the next start. Its jobs close and its held funds are released.
+
 ## Calls between the exchange and providers
 
 Providers (the platform services and the agent host) accept a request only if it carries a grant the exchange signed for that exact call (see `pacific/grants.py`). This is Pacific's counterpart to PAP's key-bound tokens, in the exchange-to-provider direction.
@@ -77,13 +97,14 @@ Providers (the platform services and the agent host) accept a request only if it
 - **Probes are graded by code.** A refusal with a different code than expected is reported but isn't a violation.
 - **`pacific sim` reports** 429s per persona and every refusal code the agents saw.
 - **Personas send an `Idempotency-Key`** with every paid call and transfer, and reuse it on retries. The sloppy persona sometimes retries with a fresh key, which can repeat work. Generated database tasks check exact row counts, so the report's `dup` column counts any work that ran twice.
+- **The traffic runner runs tasks the async way:** it starts each one (202), follows its events by long-polling, and records the time to the first event. With `--cancel-rate`, impatient owners cancel some tasks partway through.
+- **Three invariants are checked once traffic stops:** each finished or cancelled task has no open jobs (`jobs_closed`), its events are numbered without gaps (`events_contiguous`), and its top-level call events add up to its spend (`events_match_spend`).
 - **The adversary's `key_reuse` probe** reuses a key for a different request (must be refused) and for the same one (must be replayed), and checks that only the first was charged. The `idempotent_once` invariant checks that no key is ever charged twice.
 
 ## Planned (see the adoption plan)
 
 | PAP idea | Pacific phase |
 |---|---|
-| Async conversations: cursor, wait, status, server-sent events (§7.5–7.7) | 3: task runs return 202, with `GET /v1/tasks/{id}/events` |
 | Agent identity, key-bound session tokens, scopes, revocation (§4.1–4.3, 4.8–4.9) | 4: agents sign in with their own keys, get DPoP-bound, scoped, job-limited tokens; owners can revoke |
 
 **Not adopted:** browser sign-in flows, browser sessions, handoff to a person, and per-company user IDs. They have no counterpart in Pacific.

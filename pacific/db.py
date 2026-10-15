@@ -105,13 +105,23 @@ CREATE TABLE IF NOT EXISTS tasks (
     spec        TEXT NOT NULL,             -- full task JSON (description, inputs, checks...)
     budget      INTEGER NOT NULL,
     job_id      TEXT NOT NULL REFERENCES jobs(id),
-    status      TEXT NOT NULL DEFAULT 'pending', -- pending | running | passed | failed | error
+    status      TEXT NOT NULL DEFAULT 'pending', -- pending | running | passed | failed | error | cancelled
     output      TEXT,
     trace       TEXT,
     checks      TEXT,
     artifacts   TEXT,                      -- what the brain chose to report (JSON)
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     finished_at TEXT
+);
+
+-- What happened during a task, in order (see exchange/events.py).
+CREATE TABLE IF NOT EXISTS task_events (
+    task_id    TEXT NOT NULL REFERENCES tasks(id),
+    seq        INTEGER NOT NULL,
+    type       TEXT NOT NULL,              -- state | hire | call | output | check
+    data       TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (task_id, seq)
 );
 
 -- Idempotency-Key -> the stored final response, so a retried request is answered, not redone.

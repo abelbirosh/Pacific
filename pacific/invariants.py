@@ -23,6 +23,9 @@ With `quiescent=True` (no traffic in flight) also:
 holds_released       no active holds
 calls_settled        no call still pending
 tasks_finished       no task still running
+jobs_closed          a finished or cancelled task leaves no job in its tree open
+events_contiguous    each task's events are numbered 1..n with no gaps
+events_match_spend   a finished task's top-level `call` events add up to its root job's spend
 """
 
 from __future__ import annotations
@@ -107,6 +110,21 @@ def check(db: Database, data_dir: Path | None = None, quiescent: bool = False) -
                  lambda r: f"{r['id']} {r['service']}/{r['endpoint']}")
             flag("tasks_finished", q("SELECT id, title FROM tasks WHERE status = 'running'"),
                  lambda r: f"{r['id']} {r['title']}")
+            flag("jobs_closed", q(
+                "SELECT j.id, t.id AS task, t.status FROM jobs j JOIN tasks t ON t.job_id = j.root_job_id "
+                "WHERE j.status = 'open' AND t.status NOT IN ('pending', 'running')"),
+                lambda r: f"job {r['id']} still open though task {r['task']} is {r['status']}")
+            flag("events_contiguous", q(
+                "SELECT task_id, COUNT(*) AS n, MAX(seq) AS last FROM task_events GROUP BY task_id HAVING n != last"),
+                lambda r: f"task {r['task_id']} has {r['n']} events numbered up to {r['last']}")
+            for r in q("SELECT t.id, j.spent, t.status FROM tasks t JOIN jobs j ON j.id = t.job_id "
+                       "WHERE t.status IN ('passed', 'failed', 'error', 'cancelled')"):
+                logged = sum(round(json.loads(e[0])["cost"] * 1_000_000) for e in q(
+                    "SELECT data FROM task_events WHERE task_id = ? AND type = 'call' "
+                    "AND json_extract(data, '$.depth') = 0", (r["id"],)))
+                if logged != r["spent"]:
+                    out.append({"invariant": "events_match_spend",
+                                "detail": f"task {r['id']} ({r['status']}): call events total {logged}, job spent {r['spent']}"})
 
         counts = {k: q(f"SELECT COUNT(*) FROM {k}")[0][0] for k in ("accounts", "transactions", "jobs", "calls", "tasks")}
 
