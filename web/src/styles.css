@@ -8,7 +8,6 @@
   --tile: #16232b;
   --black: #070b0e;
   --petrol: #17435a;
-  --petrol-2: #1f5a75;
   --petrol-3: #2a7391;
   --foam: #e4ecf0;
   --ink: #0b1218;
@@ -21,10 +20,8 @@
 
   --step-small: clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem);
   --step-body: clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem);
-  --step-head: clamp(2.25rem, 1.3rem + 3.6vw, 4.5rem);
   --step-display: clamp(2.75rem, 7.2vw, 8.5rem);
   --step-lede: clamp(1.25rem, 0.9rem + 1.3vw, 2.125rem);
-  --step-mark: clamp(4.5rem, 17vw, 16rem);
 
   --margin: clamp(1rem, 3vw, 2.5rem);
   /* the board: one gap, one tile padding, square corners everywhere */
@@ -32,8 +29,6 @@
   --pad: clamp(1.25rem, 2.2vw, 2.25rem);
 
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-soft: cubic-bezier(0.33, 1, 0.68, 1);
-  --t-press: 140ms;
   --t-hover: 200ms;
 }
 
@@ -55,7 +50,6 @@ a { color: inherit; }
 ::selection { background: var(--petrol-3); color: var(--paper); }
 :focus-visible { outline: 3px solid var(--coral); outline-offset: 3px; }
 h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap: balance; }
-.head { font-size: var(--step-head); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 .link {
@@ -108,12 +102,9 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
   display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--gap);
   padding: var(--gap); background: var(--sea);
 }
-footer.board { padding-top: 0; }
 /* each section is a row of the board and hands its tiles the board's own columns */
 .row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; gap: var(--gap); }
 .tile { position: relative; margin: 0; padding: var(--pad); background: var(--tile); color: var(--paper); overflow: hidden; }
-.tile-picture { padding: 0; background: var(--black); }
-.tile-picture img { width: 100%; height: 100%; object-fit: cover; }
 
 /* ---------- before and after: the tangle in the dark, the one layer in the sea ---------- */
 .ba-before, .ba-after { grid-column: span 6; display: grid; align-content: start; gap: clamp(2rem, 4vw, 3.5rem); padding-bottom: calc(var(--pad) * 1.5); }
@@ -143,52 +134,11 @@ footer.board { padding-top: 0; }
 .dg-slab .dg-band { fill: var(--foam); }
 .dg-slab text { fill: var(--ink); }
 
-/* ---------- what Pacific is ---------- */
-.what-head { grid-column: span 5; min-height: 72svh; background: var(--foam); color: var(--ink); }
-.what-picture { grid-column: span 7; }
-
-/* ---------- the role it plays: four fields butted together, each a step lighter ---------- */
-.stages { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap); }
-.stage { display: flex; flex-direction: column; justify-content: space-between; gap: 2rem; min-height: 72svh; }
-.stage:nth-child(1) { background: var(--petrol); }
-.stage:nth-child(2) { background: var(--petrol-2); }
-.stage:nth-child(3) { background: var(--petrol-3); }
-.stage:nth-child(4) { background: var(--foam); color: var(--ink); }
-.stage .head { font-size: var(--step-lede); letter-spacing: -0.03em; line-height: 1.1; }
-.stage-word { margin-top: auto; font-size: var(--step-head); font-weight: 600; letter-spacing: -0.04em; line-height: 1; }
-
-/* ---------- the demo ---------- */
-.demo-head { grid-column: 1 / span 4; grid-row: 1; min-height: 18rem; }
-.demo-picture { grid-column: 1 / span 4; grid-row: 2; aspect-ratio: 1; }
-.demo-slot { grid-column: 5 / -1; grid-row: 1 / span 2; background: var(--black); min-height: 36rem; }
-
-/* ---------- the close: the name, the chart, the credits, the way back up ---------- */
-.foot-mark {
-  grid-column: span 8; display: flex; align-items: flex-end; min-height: 52svh; background: var(--black);
-  font-size: var(--step-mark); font-weight: 600; letter-spacing: -0.06em; line-height: 0.8;
-}
-.foot-map { grid-column: span 4; }
-.foot-map img { filter: grayscale(1) contrast(1.1) brightness(0.85); }
-.credits { grid-column: span 9; display: grid; align-content: start; gap: 0.35rem; font-size: 1rem; line-height: 1.45; }
-.foot-action {
-  grid-column: span 3; display: flex; align-items: flex-end; min-height: 10rem; background: var(--paper); color: var(--ink);
-  font-size: var(--step-lede); font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; text-decoration: none;
-  transition: background-color var(--t-hover) ease, transform var(--t-press) var(--ease-out);
-}
-.foot-action:active { transform: scale(0.98); }
-@media (hover: hover) and (pointer: fine) {
-  .foot-action:hover { background: var(--foam); }
-}
-
 /* ---------- motion: masked title, tiles arriving in order, wires drawing in ---------- */
 @media (prefers-reduced-motion: no-preference) {
   .js .lines [data-line] { transform: translateY(105%); animation: line-up 1000ms var(--ease-out) forwards; animation-delay: calc(var(--i, 0) * 120ms + 200ms); }
   .js [data-reveal] { opacity: 0; transform: translateY(24px); transition: opacity 800ms var(--ease-out), transform 1000ms var(--ease-out); transition-delay: calc(var(--i, 0) * 90ms); }
   .js [data-reveal].is-in { opacity: 1; transform: none; }
-  .js .shutter[data-reveal] { transform: none; clip-path: inset(0 0 100% 0); transition: clip-path 1100ms var(--ease-out), opacity 400ms ease; }
-  .js .shutter[data-reveal].is-in { clip-path: inset(0); }
-  .js .shutter[data-reveal] img { transform: scale(1.12); transition: transform 1800ms var(--ease-soft); }
-  .js .shutter[data-reveal].is-in img { transform: none; }
 
   .js .diagram .dg-wire { stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset 900ms var(--ease-out); }
   .js .dg-before .dg-wire { transition-delay: calc(400ms + mod(var(--i, 0) * 37ms, 700ms)); }
@@ -210,8 +160,5 @@ footer.board { padding-top: 0; }
 @media (max-width: 640px) {
   :root { --step-display: 13.5vw; }
   .nav { display: none; }
-  .row > *, .stages { grid-column: 1 / -1; grid-row: auto; }
-  .stages { grid-template-columns: 1fr 1fr; }
-  .stage, .what-head, .foot-mark { min-height: 40svh; }
-  .demo-slot { min-height: 20rem; }
+  .row > * { grid-column: 1 / -1; }
 }
