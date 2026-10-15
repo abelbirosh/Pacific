@@ -131,6 +131,22 @@ function BeforeAfter() {
   )
 }
 
+function Chapters() {
+  return (
+    <>
+      <section className="chapter interaction" id="agent-to-agent-interaction" aria-labelledby="interaction-head">
+        <h2 id="interaction-head" data-reveal>Agent-to-agent Interaction</h2>
+      </section>
+      <section className="chapter economics" id="first-customer-and-economics" aria-labelledby="economics-head">
+        <h2 id="economics-head" data-reveal>First customer and economics</h2>
+      </section>
+      <section className="chapter future" id="future" aria-labelledby="future-head">
+        <h2 id="future-head" data-reveal>Future</h2>
+      </section>
+    </>
+  )
+}
+
 export default function App() {
   useReveal()
   useDrawDiagrams()
@@ -139,10 +155,11 @@ export default function App() {
     <>
       <main>
         <Hero />
-        {/* below the video the page is one board: flat tiles butted together, the gaps are the lines */}
+        {/* The comparison shares the sea's background before the next chapters. */}
         <div className="board">
           <BeforeAfter />
         </div>
+        <Chapters />
       </main>
     </>
   )

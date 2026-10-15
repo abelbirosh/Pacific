@@ -247,11 +247,9 @@ export function AfterDiagram() {
                 <Label x={center} y={y + 24} anchor="middle" size={16} weight={600}>{l}</Label>
               </g>
               {k < LAYERS.length - 1 && (
-                <g className="dg-chain" aria-hidden="true">
-                  <rect x={center - 4} y={y + bandH + 3} width={8} height={14} rx={4}
-                    transform={`rotate(-25 ${center} ${y + bandH + 10})`} />
-                  <rect x={center - 4} y={y + bandH + 11} width={8} height={14} rx={4}
-                    transform={`rotate(-25 ${center} ${y + bandH + 18})`} />
+                <g className="dg-stage-arrow" aria-hidden="true">
+                  <path d={`M${center},${y + bandH + 4} V${y + bandH + bandGap - 7}`} />
+                  <polygon points={`${center - 4},${y + bandH + bandGap - 11} ${center},${y + bandH + bandGap - 5} ${center + 4},${y + bandH + bandGap - 11}`} />
                 </g>
               )}
             </g>

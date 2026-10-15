@@ -12,6 +12,8 @@
   --ink: #0b1218;
   --paper: #ffffff;
   --coral: #ff3b1f;
+  --diagram-panel: #29414e;
+  --diagram-chip: #446477;
 
   --font: 'Switzer', ui-sans-serif, system-ui, sans-serif;
   /* the face of speedrun's own headlines, used only for the alpha speedrun lockup */
@@ -119,10 +121,8 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 /* the diagrams: agents and providers are tinted panels, the tangle is coral, Pacific is the one solid thing */
 .diagram { width: 100%; height: auto; overflow: visible; }
 .diagram text { fill: var(--paper); font-family: var(--font); letter-spacing: -0.01em; }
-.dg-panel { fill: rgb(255 255 255 / 0.07); }
-.dg-chip, .dg-hub { fill: rgb(255 255 255 / 0.13); }
-.dg-before .dg-hub { fill: #182027; }
-.dg-before .dg-loose { fill: #1f2830; }
+.dg-panel, .dg-hub { fill: var(--diagram-panel); }
+.dg-chip { fill: var(--diagram-chip); }
 .dg-wire { fill: none; stroke-width: 1.6; stroke-linecap: round; }
 .dg-before .dg-wire { stroke: var(--coral); opacity: 0.75; }
 .dg-head { fill: var(--coral); }
@@ -137,7 +137,17 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .dg-slab .dg-band { fill: var(--foam); }
 .dg-slab text { fill: var(--foam); }
 .dg-slab .dg-layer-label text { fill: var(--ink); }
-.dg-chain rect { fill: none; stroke: var(--foam); stroke-width: 1.8; }
+.dg-stage-arrow path { fill: none; stroke: var(--foam); stroke-width: 2; }
+.dg-stage-arrow polygon { fill: var(--foam); }
+
+/* Heading-only chapters, ready for the next content pass. */
+.chapter {
+  padding: clamp(4rem, 7vw, 7rem) var(--margin);
+  background: var(--sea); color: var(--foam);
+}
+.chapter h2 { max-width: 22ch; font-size: clamp(3rem, 6vw, 6rem); line-height: 1.02; }
+.economics { background: var(--tile); }
+.future { padding-bottom: clamp(5rem, 10vw, 10rem); }
 
 /* ---------- motion: masked title, tiles arriving in order, wires drawing in ---------- */
 @media (prefers-reduced-motion: no-preference) {
