@@ -90,9 +90,9 @@ function Hero() {
   return (
     <section className="hero" id="top">
       <video className="hero-video" autoPlay muted loop playsInline preload="auto"
-        poster={A + 'pacific-swell-poster.jpg'} aria-hidden="true">
-        <source src={A + 'pacific-swell-720.mp4'} type="video/mp4" media="(max-width: 600px)" />
-        <source src={A + 'pacific-swell-1080.mp4'} type="video/mp4" />
+        poster={A + 'pacific-sea-poster.jpg'} aria-hidden="true">
+        <source src={A + 'pacific-sea-720.mp4'} type="video/mp4" media="(max-width: 600px)" />
+        <source src={A + 'pacific-sea-1080.mp4'} type="video/mp4" />
       </video>
       <Header />
       <div className="hero-copy">

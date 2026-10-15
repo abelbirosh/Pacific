@@ -1,17 +1,17 @@
 /* Pacific: the transaction layer for AI agents. The first screen is the sea itself; below it the page is
    one board of flat, square tiles butted together on the sea's own dark, so every boundary is a hard,
-   even line. Colours come from the video: sea-dark ground, petrol blue, foam. Coral marks the tangle. */
+   even line. Colours come from the video: slate sea-dark ground, sea blue, foam. Coral marks the tangle. */
 
 :root {
-  /* from the footage: its shadows, its mid-water, its foam */
-  --sea: #0a221d;
-  --tile: #10302a;
-  --black: #060b0a;
-  --petrol: #0f4a5c;
-  --petrol-2: #146577;
-  --petrol-3: #1c8193;
-  --foam: #e3eeec;
-  --ink: #071210;
+  /* from the footage: its shadows, its slate mid-water, its foam */
+  --sea: #0e171d;
+  --tile: #16232b;
+  --black: #070b0e;
+  --petrol: #17435a;
+  --petrol-2: #1f5a75;
+  --petrol-3: #2a7391;
+  --foam: #e4ecf0;
+  --ink: #0b1218;
   --paper: #ffffff;
   --coral: #ff3b1f;
 
@@ -78,8 +78,8 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .hero::before {
   content: ''; position: absolute; inset: 0; pointer-events: none;
   background:
-    linear-gradient(0deg, var(--sea), rgb(10 34 29 / 0.85) 7%, rgb(10 34 29 / 0) 30%),
-    linear-gradient(180deg, rgb(0 0 0 / 0.38), rgb(0 0 0 / 0.18) 22%, rgb(0 0 0 / 0.18) 70%, rgb(0 0 0 / 0));
+    linear-gradient(0deg, var(--sea), rgb(14 23 29 / 0.85) 7%, rgb(14 23 29 / 0) 30%),
+    linear-gradient(180deg, rgb(0 0 0 / 0.42), rgb(0 0 0 / 0.3) 22%, rgb(0 0 0 / 0.3) 70%, rgb(0 0 0 / 0));
 }
 .hero > .header, .hero-copy { position: relative; z-index: 1; }
 
@@ -126,13 +126,13 @@ footer.board { padding-top: 0; }
 .diagram text { fill: var(--paper); font-family: var(--font); letter-spacing: -0.01em; }
 .dg-panel { fill: rgb(255 255 255 / 0.07); }
 .dg-chip, .dg-hub { fill: rgb(255 255 255 / 0.13); }
-.dg-before .dg-hub { fill: #18201e; }
-.dg-before .dg-loose { fill: #1f2826; }
+.dg-before .dg-hub { fill: #182027; }
+.dg-before .dg-loose { fill: #1f2830; }
 .dg-wire { fill: none; stroke-width: 1.6; stroke-linecap: round; }
 .dg-before .dg-wire { stroke: var(--coral); opacity: 0.75; }
 .dg-head { fill: var(--coral); }
 /* the part of the web that turns agents away: a dark chip in coral type, its wire stopped by an X */
-.dg-before .dg-shut .dg-loose { fill: #121816; }
+.dg-before .dg-shut .dg-loose { fill: #11171c; }
 .dg-before .dg-shut text { fill: var(--coral); }
 .dg-block circle { fill: var(--black); stroke: var(--coral); stroke-width: 2; }
 .dg-block path { fill: none; stroke: var(--paper); stroke-width: 2.5; stroke-linecap: round; }
