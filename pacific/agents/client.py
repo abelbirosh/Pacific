@@ -40,10 +40,19 @@ class Receipt:
 
 
 class ExchangeClient:
-    def __init__(self, base_url: str, api_key: str, job_id: str | None = None, timeout: float = 900):
+    """Pass `auth` (a pacific.auth.DPoPAuth: key-bound session tokens) or, while the exchange
+    still accepts them, a legacy `api_key`."""
+
+    def __init__(self, base_url: str, api_key: str | None = None, job_id: str | None = None, timeout: float = 900,
+                 auth: httpx.Auth | None = None):
         self.job_id = job_id
-        self._http = httpx.Client(base_url=base_url, timeout=timeout,
-                                  headers={"Authorization": f"Bearer {api_key}"})
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key and auth is None else {}
+        self._http = httpx.Client(base_url=base_url, timeout=timeout, headers=headers, auth=auth)
+
+    @property
+    def auth(self):
+        """The DPoPAuth in use, if any."""
+        return self._http.auth
 
     @property
     def base_url(self) -> httpx.URL:

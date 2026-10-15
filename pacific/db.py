@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     key_hash   TEXT UNIQUE,
     balance    INTEGER NOT NULL DEFAULT 0 CHECK (balance >= 0),
     profile    TEXT NOT NULL DEFAULT '{}',
+    jwk        TEXT,                       -- the account's public key (agents and people)
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
@@ -114,6 +115,28 @@ CREATE TABLE IF NOT EXISTS tasks (
     finished_at TEXT
 );
 
+-- Session tokens (stored hashed), each bound to the key that proved possession (see auth.py).
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash  TEXT PRIMARY KEY,
+    account_id  TEXT NOT NULL REFERENCES accounts(id),
+    jkt         TEXT NOT NULL,             -- thumbprint of the key the token is bound to
+    scopes      TEXT NOT NULL,             -- space-separated
+    resource    TEXT,                      -- e.g. job:<id>: the token works only there
+    expires_at  REAL NOT NULL,             -- unix time
+    revoked     INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+-- What an owner lets its agent do. Revoking it cuts the agent off at its next request.
+CREATE TABLE IF NOT EXISTS mandates (
+    agent_id    TEXT PRIMARY KEY REFERENCES accounts(id),
+    owner_id    TEXT NOT NULL REFERENCES accounts(id),
+    scopes      TEXT NOT NULL,
+    daily_cap   INTEGER,                   -- micro-WD the agent may be charged per 24h, if set
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    revoked_at  TEXT
+);
+
 -- What happened during a task, in order (see exchange/events.py).
 CREATE TABLE IF NOT EXISTS task_events (
     task_id    TEXT NOT NULL REFERENCES tasks(id),
@@ -162,6 +185,9 @@ class Database:
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(tasks)")}
         if "artifacts" not in cols:
             self._conn.execute("ALTER TABLE tasks ADD COLUMN artifacts TEXT")
+        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(accounts)")}
+        if "jwk" not in cols:
+            self._conn.execute("ALTER TABLE accounts ADD COLUMN jwk TEXT")
         cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(calls)")}
         if "idempotency_key" not in cols:
             self._conn.execute("ALTER TABLE calls ADD COLUMN idempotency_key TEXT")

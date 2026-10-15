@@ -40,6 +40,8 @@ from ..money import fmt, to_micro, to_wd
 from ..registry import Registry, register_agent_offering
 from .checks import CheckContext, run_checks
 from .events import TERMINAL, TaskEvents
+from ..auth import AGENT_SCOPES, PERSON_SCOPES
+from .identity import Identity, Principal
 
 PROTOCOL_VERSION = "0.1"
 PLATFORM_TIMEOUT = 120
@@ -60,6 +62,8 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
     events = TaskEvents(db)
     running: set[asyncio.Task] = set()  # tasks executing in the background (keeps them referenced)
     ledger, registry = Ledger(db), Registry(db)
+    identity = Identity(db, ledger, config.home, secrets["admin_key"])
+    identity.ensure_keys_and_mandates()
     # No connection cap: a delegated call holds its connection while the hired agent makes calls
     # of its own, so a capped pool can fill with callers waiting on callees that can't connect.
     http = httpx.AsyncClient(limits=httpx.Limits(max_connections=None, max_keepalive_connections=200))
@@ -97,7 +101,8 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         return JSONResponse(error_body("internal_error", "internal error"), status_code=500)
 
     rate, burst = ratelimit.limits_from_env()
-    ratelimit.install(app, secrets["admin_key"], rate, burst)
+    ratelimit.install(app, secrets["admin_key"], rate, burst, key_for=identity.account_for)
+    app.include_router(identity.router())
 
     # ---- discovery ----------------------------------------------------------------------------
 
@@ -107,12 +112,19 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         return {
             "protocol_version": PROTOCOL_VERSION,
             "organization": {"name": "Pacific Exchange", "url": config.exchange_url},
-            "auth": {"schemes": ["bearer"]},
+            "auth": {
+                "token_endpoint": "/v1/auth/token", "revocation_endpoint": "/v1/auth/revoke",
+                "grant_types": ["urn:ietf:params:oauth:grant-type:jwt-bearer"], "token_type": "DPoP",
+                "signing_algs": ["EdDSA"], "resources": ["job:<id>"],
+                "scopes": {"agent": list(AGENT_SCOPES), "person": list(PERSON_SCOPES)},
+                "legacy_api_keys": identity.legacy_keys,
+            },
             "endpoints": {
                 "me": "/v1/me", "services": "/v1/services", "quote": "/v1/quote/{service}/{endpoint}",
                 "call": "/v1/call/{service}/{endpoint}", "jobs": "/v1/jobs/{job_id}", "transfer": "/v1/transfer",
                 "offer": "/v1/services", "tasks": "/v1/tasks", "run_task": "/v1/tasks/{task_id}/run",
                 "task_events": "/v1/tasks/{task_id}/events", "cancel_task": "/v1/tasks/{task_id}/cancel",
+                "mandates": "/v1/mandates/{agent}",
             },
             "apis": [{"type": "openapi", "url": "/openapi.json", "description": "The exchange's full HTTP API"}],
             "headers": {"job": "X-Pacific-Job", "max_cost": "X-Pacific-Max-Cost"},
@@ -123,29 +135,28 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
 
     # ---- auth -------------------------------------------------------------------------------
 
-    def bearer(authorization: str = Header(default="")) -> str:
-        if not authorization.startswith("Bearer "):
-            raise HTTPException(401, "missing bearer API key")
-        return authorization.removeprefix("Bearer ").strip()
+    # Who's asking (see identity.py): handlers get the account row (None for the admin); the
+    # full principal, with its scopes and any job it's limited to, is on request.state.
 
-    def is_admin(key: str) -> bool:
-        return pysecrets.compare_digest(key, secrets["admin_key"])
+    def acting_as(scope: str | None = None, admin_ok: bool = False):
+        def dependency(request: Request, p: Principal = Depends(identity.principal)):
+            request.state.principal = p
+            if p.admin:
+                if not admin_ok:
+                    raise HTTPException(403, "the admin key isn't an account")
+                return None
+            if scope:
+                identity.need(p, scope)
+            return p.account
+        return dependency
 
-    def account(key: str = Depends(bearer)):
-        row = ledger.account_by_key(key)
-        if row is None:
-            raise HTTPException(401, "unknown API key")
-        return row
+    account = acting_as()
 
-    def admin(key: str = Depends(bearer)):
-        if not is_admin(key):
+    def admin(p: Principal = Depends(identity.principal)):
+        if not p.admin:
             raise HTTPException(403, "admin key required")
 
-    def admin_or_account(key: str = Depends(bearer)):
-        """None for admin, otherwise the account row."""
-        if is_admin(key):
-            return None
-        return account(key)
+    admin_or_account = acting_as(admin_ok=True)
 
     def money(micro: int) -> dict:
         return {"micro": micro, "wd": to_wd(micro), "display": fmt(micro)}
@@ -153,7 +164,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
     # ---- identity & catalog -----------------------------------------------------------------
 
     @app.get("/v1/me")
-    def me(acct=Depends(account)):
+    def me(acct=Depends(acting_as("pacific:read"))):
         with db.tx() as conn:
             available = ledger.available(conn, acct["id"])
         return {
@@ -179,7 +190,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         markup_pct: float = Field(ge=0, le=500)
 
     @app.post("/v1/services")
-    def offer(req: Offering, acct=Depends(account)):
+    def offer(req: Offering, acct=Depends(acting_as("pacific:offer"))):
         """An agent lists a skill it will perform for other agents (task delegation)."""
         if acct["kind"] != "agent":
             raise HTTPException(403, "only agents can list delegation services")
@@ -211,7 +222,8 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         memo: str = ""
 
     @app.post("/v1/transfer")
-    async def transfer(req: Transfer, acct=Depends(account), idempotency_key: str | None = Header(default=None)):
+    async def transfer(req: Transfer, acct=Depends(acting_as("pacific:transfer")),
+                       idempotency_key: str | None = Header(default=None)):
         async def handler():
             dest = ledger.resolve(req.to)
             if dest is None:
@@ -223,7 +235,10 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         return await idem.run(acct["id"], idempotency_key, idempotency.fingerprint("transfer", req.model_dump()), handler)
 
     @app.get("/v1/jobs/{job_id}")
-    def job(job_id: str, who=Depends(admin_or_account)):
+    def job(job_id: str, request: Request, who=Depends(acting_as("pacific:read", admin_ok=True))):
+        limited = request.state.principal.job
+        if limited and job_id != limited:
+            raise HTTPException(403, f"this token only works inside job {limited}")
         status = ledger.job_status(job_id)
         if who is not None and status["account_id"] != who["id"]:
             raise HTTPException(403, "not your job")
@@ -254,19 +269,26 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         idempotency_key: str | None = Header(default=None),
     ):
         body = await _json(request)
+        p: Principal = request.state.principal
+        if p.job:  # a job-limited token spends only inside its job
+            if x_pacific_job is None:
+                x_pacific_job = p.job
+            elif x_pacific_job != p.job:
+                raise HTTPException(403, f"this token only works inside job {p.job}")
         return await idem.run(
             acct["id"], idempotency_key,
             idempotency.fingerprint("call", service, endpoint, x_pacific_job, x_pacific_max_cost, body),
-            lambda: _call(service, endpoint, body, acct, x_pacific_job, x_pacific_max_cost, idempotency_key),
+            lambda: _call(service, endpoint, body, acct, p, x_pacific_job, x_pacific_max_cost, idempotency_key),
         )
 
-    async def _call(service: str, endpoint: str, body: dict, acct, x_pacific_job: str | None,
+    async def _call(service: str, endpoint: str, body: dict, acct, p: Principal, x_pacific_job: str | None,
                     x_pacific_max_cost: float | None, idempotency_key: str | None) -> tuple[int, dict, bool]:
         """One metered call. Returns (HTTP status, body, final): `final` is False for outcomes
         a retry could change (the provider failed or timed out), which aren't kept for replay."""
         svc, ep = registry.service(service), registry.endpoint(service, endpoint)
         if svc is None or ep is None:
             raise HTTPException(404, f"no endpoint {service}/{endpoint}")
+        identity.need(p, "pacific:hire" if svc["kind"] == "agent" else "pacific:spend")
         if svc["provider_id"] == acct["id"]:
             raise HTTPException(400, "an agent cannot buy its own service")
         plan = registry.plan(ep)
@@ -289,6 +311,8 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
 
         call_id = new_id("call")
         with db.tx() as conn:
+            if acct["kind"] == "agent":
+                identity.check_daily_cap(conn, acct["id"], hold_amount)
             hold_id = ledger.place_hold(conn, acct["id"], hold_amount, x_pacific_job)
             conn.execute(
                 "INSERT INTO calls(id, caller_id, service, endpoint, job_id, held, idempotency_key) VALUES (?,?,?,?,?,?,?)",
@@ -390,7 +414,8 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         checks: list[dict] = Field(default_factory=list)
 
     @app.post("/v1/tasks")
-    async def create_task(req: TaskIn, who=Depends(admin_or_account), idempotency_key: str | None = Header(default=None)):
+    async def create_task(req: TaskIn, who=Depends(acting_as("pacific:tasks", admin_ok=True)),
+                          idempotency_key: str | None = Header(default=None)):
         async def handler():
             return 200, _create_task(req, who), True
 
@@ -435,7 +460,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         return task
 
     @app.post("/v1/tasks/{task_id}/run")
-    async def run_task(task_id: str, who=Depends(admin_or_account), wait: float = 0):
+    async def run_task(task_id: str, who=Depends(acting_as("pacific:tasks", admin_ok=True)), wait: float = 0):
         """Start the task and return 202 at once; follow it at /v1/tasks/{id}/events. With
         `wait`, hold the request up to that many seconds and return the full report (200) if
         it finished by then."""
@@ -507,7 +532,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
             events.emit(task_id, "state", status="error")
 
     @app.post("/v1/tasks/{task_id}/cancel")
-    async def cancel_task(task_id: str, who=Depends(admin_or_account)):
+    async def cancel_task(task_id: str, who=Depends(acting_as("pacific:tasks", admin_ok=True))):
         """Stop a task: its whole job tree closes, so no further holds can be placed in it; calls
         already in flight finish and settle. Cancelling a finished task changes nothing."""
         task = _task_for(task_id, who, manage=True)
@@ -523,7 +548,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
 
     @app.get("/v1/tasks/{task_id}/events")
     async def task_events(task_id: str, request: Request, cursor: str | None = None, wait: float = 0,
-                          who=Depends(admin_or_account)):
+                          who=Depends(acting_as("pacific:read", admin_ok=True))):
         _task_for(task_id, who)
         if "text/event-stream" in request.headers.get("accept", ""):
             start = request.headers.get("last-event-id") or cursor
@@ -602,7 +627,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         return d
 
     @app.get("/v1/tasks/{task_id}")
-    def get_task(task_id: str, who=Depends(admin_or_account)):
+    def get_task(task_id: str, who=Depends(acting_as("pacific:read", admin_ok=True))):
         _task_for(task_id, who)
         return task_report(task_id)
 

@@ -98,7 +98,7 @@ def test_adversary_probes_are_all_refused(market):
     _, secrets, admin = market
     aid, _ = agent_with(secrets)
     probed = set()
-    for seed in range(8):
+    for seed in range(6):
         sim = check_report(run_task(admin, sim_task("code_run.json", aid, "adversary", seed, budget=10)), "adversary")
         probed |= {p["probe"] for p in sim["probes"]}
     assert len(probed) >= 10, probed

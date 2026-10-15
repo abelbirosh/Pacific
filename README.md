@@ -128,6 +128,7 @@ Agents work with the exchange through a small protocol inspired by the [Personal
 - **Error codes:** every refusal carries a machine-readable code: `{"error": "budget_exceeded", "detail": "..."}`.
 - **Rate limits:** each credential is rate limited (`PACIFIC_RATE_PER_S`, `PACIFIC_RATE_BURST`). Over the limit, requests get 429 `rate_limited` with `Retry-After`.
 - **Async tasks:** `POST /v1/tasks/{id}/run` returns 202 at once. Follow the task at `GET /v1/tasks/{id}/events` (cursor and long-poll, or server-sent events), and stop it with `POST /v1/tasks/{id}/cancel`. `pacific task run` prints events live, and `pacific task watch <id>` follows a task that's already running.
+- **Identity:** every agent and person has a key pair. Accounts sign in at `POST /v1/auth/token` with a signed assertion, and get short-lived, scoped session tokens bound to their key (DPoP). Agents can also get tokens limited to one job. Owners grant and revoke their agents' mandates (`/v1/mandates`). Legacy API keys still work unless `PACIFIC_LEGACY_KEYS=0`.
 - **Idempotent requests:** send `Idempotency-Key` with a call, transfer or task, and reuse it when retrying. A retry gets the original response and is never redone or charged twice, even when the provider did the work and then lost the reply.
 
 ## HTTP API (exchange)
@@ -135,6 +136,8 @@ Agents work with the exchange through a small protocol inspired by the [Personal
 | | |
 |---|---|
 | `GET /.well-known/pacific.json` | discovery document (no auth) |
+| `POST /v1/auth/token`, `POST /v1/auth/revoke` | sign in with a key-signed assertion + DPoP proof; get / revoke a session token |
+| `GET /v1/mandates/{agent}`, `POST /v1/mandates`, `POST /v1/mandates/{agent}/revoke` | an owner's grant to its agent (scopes, daily cap) |
 | `GET /v1/me` | identity, balance, available (after holds) |
 | `GET /v1/services?kind=&skill=` | catalog, price plans, request schemas |
 | `POST /v1/quote/{service}/{endpoint}` | worst-case and floor cost for a body |
@@ -146,7 +149,7 @@ Agents work with the exchange through a small protocol inspired by the [Personal
 | `GET /v1/tasks/{id}/events`, `POST /v1/tasks/{id}/cancel` | follow a task's events (cursor, long-poll, SSE); cancel it |
 | `GET /v1/admin/{accounts,transactions,audit}`, `POST /v1/admin/{mint,transfer}` | admin |
 
-Auth uses `Authorization: Bearer <key>`. Keys live in `.pacific/secrets.json`, which is gitignored.
+Accounts authenticate with DPoP session tokens from `POST /v1/auth/token` (see [docs/protocol.md](docs/protocol.md#identity-and-session-tokens)). Account keys live in `.pacific/keys/`. Legacy API keys (`Authorization: Bearer <key>`) and the admin key live in `.pacific/secrets.json`. All of `.pacific/` is gitignored.
 
 Platform services and the agent host accept a request only if it carries a **grant** the exchange signed for that exact call (`pacific/grants.py`). The exchange signs with an Ed25519 key (`.pacific/exchange_key.pem`). Providers hold only the public key, so nothing on their side can mint grants. A grant names:
 - the path it's for

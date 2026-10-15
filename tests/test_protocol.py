@@ -51,7 +51,7 @@ def test_every_refusal_carries_a_known_code(economy):
         (agent.post("/v1/transfer", json={"to": other, "amount": 10**9}), 402, "insufficient_funds"),
         (agent.post("/v1/transfer", json={"to": other, "amount": -1}), 422, "invalid_request"),
         (agent.post("/v1/call/ocean_storage/list", json={}, headers={"X-Pacific-Job": "job_000000000000"}), 404, "not_found"),
-        (agent.post(f"/v1/tasks/{task['id']}/run"), 403, "forbidden"),
+        (agent.post(f"/v1/tasks/{task['id']}/run"), 403, "insufficient_scope"),  # agents can't run tasks
         (agent.post(f"/v1/call/{b['offerings'][0]}/delegate", json={"description": "x", "budget": 20}, headers=job),
          402, "budget_exceeded"),
         (agent.post("/v1/call/ocean_storage/get", json={"key": "../x"}, headers=job), 400, "invalid_request"),

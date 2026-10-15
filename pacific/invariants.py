@@ -14,6 +14,7 @@ delegation_bill      a hire costs fee + seller's spend at cost-plus (or just the
                      charge that lands on the child job after the buyer was billed shows up here
 workspace            every storage / database directory belongs to a root job or an account
 idempotent_once      no Idempotency-Key was charged for more than once
+mandate_respected    no agent was charged for a call it started after its owner revoked its mandate
 
 The exchange adds `unhandled_error` for any exception it didn't handle (it should refuse bad
 input with a 4xx, never fall over on it).
@@ -93,6 +94,11 @@ def check(db: Database, data_dir: Path | None = None, quiescent: bool = False) -
             "SELECT caller_id, idempotency_key, COUNT(*) AS n FROM calls WHERE idempotency_key IS NOT NULL "
             "AND cost > 0 GROUP BY caller_id, idempotency_key HAVING n > 1"),
             lambda r: f"{r['caller_id']} was charged {r['n']} times for key {r['idempotency_key']!r}")
+
+        flag("mandate_respected", q(
+            "SELECT c.id, c.caller_id, c.started_at, m.revoked_at FROM calls c JOIN mandates m ON m.agent_id = c.caller_id "
+            "WHERE m.revoked_at IS NOT NULL AND c.started_at > m.revoked_at AND c.cost > 0"),
+            lambda r: f"{r['id']} by {r['caller_id']} at {r['started_at']}, mandate revoked {r['revoked_at']}")
 
         if data_dir is not None:
             owners = {r[0] for r in q("SELECT DISTINCT root_job_id FROM jobs")} | {r[0] for r in q("SELECT id FROM accounts")}

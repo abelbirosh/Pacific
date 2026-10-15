@@ -1,8 +1,9 @@
 """Per-account rate limits on the exchange's API: a token bucket per caller.
 
 Over the limit, a request gets 429 `rate_limited` with a Retry-After header, and the caller must
-wait at least that long (PAP 4.3). The caller is identified by its credential, so no database
-lookup is needed; requests without one share a bucket per client address. The admin key is exempt.
+wait at least that long (PAP 4.3). The caller is identified by the account behind its credential
+(`key_for`), so opening more sessions doesn't buy more requests; requests without credentials
+share a bucket per client address. The admin key and the token endpoint are exempt.
 
 PACIFIC_RATE_PER_S (default 100) refills each bucket; PACIFIC_RATE_BURST (default 200) caps it.
 Set PACIFIC_RATE_PER_S=0 to turn limits off.
@@ -49,7 +50,7 @@ def limits_from_env() -> tuple[float, float]:
     return rate, float(os.environ.get("PACIFIC_RATE_BURST", max(1.0, rate * 2)))
 
 
-def install(app: FastAPI, admin_key: str, rate: float, burst: float) -> TokenBuckets | None:
+def install(app: FastAPI, admin_key: str, rate: float, burst: float, key_for=lambda auth: auth) -> TokenBuckets | None:
     if rate <= 0:
         return None
     buckets = TokenBuckets(rate, burst)
@@ -58,12 +59,12 @@ def install(app: FastAPI, admin_key: str, rate: float, burst: float) -> TokenBuc
 
     @app.middleware("http")
     async def rate_limit(request: Request, call_next):
-        if not request.url.path.startswith("/v1/"):
+        if not request.url.path.startswith("/v1/") or request.url.path == "/v1/auth/token":
             return await call_next(request)
         auth = request.headers.get("authorization", "")
         if auth == admin_auth:
             return await call_next(request)
-        key = hashlib.sha256(auth.encode()).hexdigest() if auth else f"addr:{request.client.host if request.client else '?'}"
+        key = hashlib.sha256(key_for(auth).encode()).hexdigest() if auth else f"addr:{request.client.host if request.client else '?'}"
         wait = buckets.take(key)
         seen["n"] += 1
         if seen["n"] % 10_000 == 0:

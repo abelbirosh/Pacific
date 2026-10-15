@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+from pathlib import Path
 import statistics
 import time
 from collections import Counter, defaultdict
@@ -18,6 +19,7 @@ from dataclasses import asdict, dataclass, field
 
 import httpx
 
+from ..auth import Credentials, DPoPAuth
 from ..exchange.events import TERMINAL
 from .workload import Workload
 
@@ -60,11 +62,18 @@ class TaskRecord:
     sim: dict = field(default_factory=dict)
 
 
-async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, progress=None) -> dict:
+async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, progress=None, home: Path | None = None) -> dict:
+    """With `home` (where the account keys live), owners sign in with their keys and use DPoP
+    session tokens; without it they use their legacy API keys."""
     rng = random.Random(cfg.seed)
     workload = Workload(seed=cfg.seed, research=cfg.research)
     agents = secrets["agents"]
     owner_key = {aid: secrets["people"][a["owner"]]["key"] for aid, a in agents.items()}
+    owner_auth = {}
+    if home is not None:
+        by_owner = {a["owner"]: DPoPAuth(Credentials.load(home, a["owner"]), scope="pacific:read pacific:tasks")
+                    for a in agents.values()}
+        owner_auth = {aid: by_owner[a["owner"]] for aid, a in agents.items()}
     records: list[TaskRecord] = []
     violations: dict[str, dict] = {}
     gate = asyncio.Semaphore(cfg.concurrency)
@@ -83,11 +92,12 @@ async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, prog
         async with gate:
             rec.queued_s = time.monotonic() - arrived
             t0 = time.monotonic()
-            auth = {"Authorization": f"Bearer {owner_key[spec['agent']]}"}
+            dpop = owner_auth.get(spec["agent"])
+            auth = {} if dpop else {"Authorization": f"Bearer {owner_key[spec['agent']]}"}
 
             async def send(method: str, path: str, **kw) -> httpx.Response:
                 for _ in range(6):  # owners honour rate limits too
-                    r = await http.request(method, path, headers=auth, **kw)
+                    r = await http.request(method, path, headers=auth, auth=dpop or httpx.USE_CLIENT_DEFAULT, **kw)
                     if r.status_code != 429:
                         return r
                     await asyncio.sleep(min(10.0, float(r.headers.get("Retry-After", 1))))
@@ -218,6 +228,7 @@ def _group(records: list[TaskRecord]) -> dict:
         "retries": sum(s.get("retries", 0) for s in sims),
         "hires": sum(s.get("hires", 0) for s in sims),
         "gave_up": sum(bool(s.get("gave_up")) for s in sims),
+        "token_renewals": sum(s.get("token_renewals", 0) for s in sims),
         "probes": sum(len(s.get("probes", [])) for s in sims),
         "rate_limited": sum(s.get("errors", {}).get("rate_limited", 0) for s in sims),
         "replays": sum(s.get("replays", 0) + s.get("provider_replays", 0) for s in sims),
