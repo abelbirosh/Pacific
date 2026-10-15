@@ -97,12 +97,12 @@ function useFullWidthTitle() {
   return ref
 }
 
-/** Big screens get the 4K master; phones and small windows get the 720p cut of the same clip. */
-function OceanVideo({ name, label }: { name: string; label: string }) {
+/** Big screens get the HD clip; phones and small windows get the 720p version. */
+function OceanVideo() {
   const [big] = useState(() => window.matchMedia('(min-width: 1024px)').matches || window.screen.width * window.devicePixelRatio >= 2400)
   return (
-    <video className="band-video" autoPlay muted loop playsInline preload="auto" poster={`${A}${name}-poster.jpg`} aria-label={label}>
-      <source src={`${A}${name}${big ? '-4k' : ''}.mp4`} type="video/mp4" />
+    <video className="band-video" autoPlay muted loop playsInline preload="auto" poster={`${A}pacific-background-poster.jpg`} aria-hidden="true">
+      <source src={`${A}pacific-background${big ? '-hd' : ''}.mp4`} type="video/mp4" />
     </video>
   )
 }
@@ -112,7 +112,7 @@ function Hero() {
   return (
     <section className="hero" id="top">
       <div className="band band-dark">
-        <OceanVideo name="ocean-dark" label="Dark blue ocean swell rising and falling" />
+        <OceanVideo />
         <Header />
       </div>
       <div className="title-band">
@@ -121,7 +121,7 @@ function Hero() {
         </h1>
       </div>
       <div className="band band-surf">
-        <OceanVideo name="ocean-surf" label="Aerial view of white surf rolling in over dark water" />
+        <OceanVideo />
       </div>
     </section>
   )
