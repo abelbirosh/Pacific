@@ -1,6 +1,5 @@
-/* Pacific: the transaction layer for AI agents. The first screen is the sea itself; below it the page is
-   one board of flat, square tiles butted together on the sea's own dark, so every boundary is a hard,
-   even line. Colours come from the video: slate sea-dark ground, sea blue, foam. Coral marks the tangle. */
+/* Pacific: the transaction layer for AI agents. The first screen is the sea itself; the comparison
+   continues on the same sea-dark ground, with space separating its two views. Coral marks the tangle. */
 
 :root {
   /* from the footage: its shadows, its slate mid-water, its foam */
@@ -110,8 +109,11 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
     content: ''; position: absolute; inset: auto 0 0; height: 30svh; z-index: 1; pointer-events: none;
     background: linear-gradient(to bottom, transparent, var(--sea));
   }
-  .ba-before { background: linear-gradient(to bottom, var(--sea), var(--black) 6rem); }
-  .ba-after { background: linear-gradient(to bottom, var(--sea), var(--petrol) 6rem); }
+  .board { padding: clamp(2rem, 4vw, 4rem) var(--margin) clamp(3rem, 6vw, 6rem); }
+  .board > .row { column-gap: clamp(2.5rem, 5vw, 6rem); }
+  .ba-before, .ba-after { padding: 0; background: transparent; gap: clamp(2rem, 3vw, 3rem); }
+  .ba-word { font-size: clamp(3.5rem, 5vw, 5.5rem); }
+  .ba-before .ba-word { color: var(--foam); }
 }
 
 /* the diagrams: agents and providers are tinted panels, the tangle is coral, Pacific is the one solid thing */
@@ -131,9 +133,11 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .dg-block path { fill: none; stroke: var(--paper); stroke-width: 2.5; stroke-linecap: round; }
 .dg-after .dg-wire { stroke: var(--paper); stroke-width: 2.5; }
 .dg-end { fill: var(--paper); }
-.dg-slab > rect { fill: var(--paper); }
+.dg-slab > rect { fill: rgb(255 255 255 / 0.05); }
 .dg-slab .dg-band { fill: var(--foam); }
-.dg-slab text { fill: var(--ink); }
+.dg-slab text { fill: var(--foam); }
+.dg-slab .dg-layer-label text { fill: var(--ink); }
+.dg-chain rect { fill: none; stroke: var(--foam); stroke-width: 1.8; }
 
 /* ---------- motion: masked title, tiles arriving in order, wires drawing in ---------- */
 @media (prefers-reduced-motion: no-preference) {

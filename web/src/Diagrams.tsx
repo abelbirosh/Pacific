@@ -213,9 +213,11 @@ export function AfterDiagram() {
   const mid = (g: Group) => g.y + groupHeight(g.items.length) / 2
   const left: number[] = [...AGENTS.map(mid), 530]
   const right: number[] = PROVIDERS.map(mid)
-  const bandTop = 58
-  const bandGap = 6
-  const bandH = (SLAB.h - bandTop - 10 - bandGap * (LAYERS.length - 1)) / LAYERS.length
+  const bandTop = 168
+  const bandGap = 28
+  const bandH = 38
+  const bandWidths = [98, 132, 112, 104]
+  const center = SLAB.x + SLAB.w / 2
 
   return (
     <svg className="diagram dg-after" viewBox={`0 0 ${W} ${H}`} role="img"
@@ -235,13 +237,23 @@ export function AfterDiagram() {
       <Agents customInColumn />
       <g className="dg-slab">
         <rect x={SLAB.x} y={SLAB.y} width={SLAB.w} height={SLAB.h} />
-        <Label x={SLAB.x + 18} y={36} size={24} weight={600}>Pacific</Label>
+        <Label x={center} y={140} anchor="middle" size={24} weight={600}>Pacific</Label>
         {LAYERS.map((l, k) => {
           const y = bandTop + k * (bandH + bandGap)
           return (
             <g key={l}>
-              <rect className="dg-band" x={SLAB.x + 10} y={y} width={SLAB.w - 20} height={bandH} />
-              <Label x={SLAB.x + 24} y={y + 30} size={16} weight={600}>{l}</Label>
+              <rect className="dg-band" x={center - bandWidths[k] / 2} y={y} width={bandWidths[k]} height={bandH} />
+              <g className="dg-layer-label">
+                <Label x={center} y={y + 24} anchor="middle" size={16} weight={600}>{l}</Label>
+              </g>
+              {k < LAYERS.length - 1 && (
+                <g className="dg-chain" aria-hidden="true">
+                  <rect x={center - 4} y={y + bandH + 3} width={8} height={14} rx={4}
+                    transform={`rotate(-25 ${center} ${y + bandH + 10})`} />
+                  <rect x={center - 4} y={y + bandH + 11} width={8} height={14} rx={4}
+                    transform={`rotate(-25 ${center} ${y + bandH + 18})`} />
+                </g>
+              )}
             </g>
           )
         })}
