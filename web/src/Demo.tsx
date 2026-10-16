@@ -16,7 +16,11 @@ type Stage = { name: string; summary: string; uses: string[]; role: string; line
 
 const BUDGET = 60
 const ws = (n: number) => 'Wave $' + n.toFixed(2)
-const tick = <span className="demo-ok" aria-label="passed">✓</span>
+/** A drawn check mark, so it renders the same everywhere and never as an emoji. */
+const Check = () => (
+  <svg className="demo-check" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 6.2 5 8.6 9.6 3.6" /></svg>
+)
+const tick = <span className="demo-ok" role="img" aria-label="passed"><Check /></span>
 
 const STAGES: Stage[] = [
   {
@@ -122,8 +126,7 @@ export function Demo() {
   return (
     <div className="demo" data-reveal>
       <p className="demo-request">
-        <span className="demo-eyebrow">Sample request</span>
-        Your agent needs a signup feature: password research, an accounts database and a security audit.
+        <strong>Sample request.</strong> Your agent needs a signup feature: password research, an accounts database and a security audit.
         It has none of these skills, and a budget of <strong>{ws(BUDGET)}</strong>.
       </p>
 
@@ -136,7 +139,7 @@ export function Demo() {
               className={n < at ? 'is-done' : undefined}
               onClick={() => setAt(n)}
             >
-              <span className="demo-num">{n < at ? '✓' : n + 1}</span>
+              {n < at && <span className="demo-done" role="img" aria-label="done"><Check /></span>}
               {s.name}
             </button>
           </li>
@@ -159,7 +162,7 @@ export function Demo() {
               <span className="demo-route">{l.who}</span>
               <div className="demo-body">
                 {l.body}
-                {l.tag && <span className={`demo-tag demo-tag-${l.tag}`}>{l.tag}</span>}
+                {l.tag && <span className={`demo-tag demo-tag-${l.tag}`}>{l.tag[0].toUpperCase() + l.tag.slice(1)}</span>}
               </div>
             </li>
           ))}

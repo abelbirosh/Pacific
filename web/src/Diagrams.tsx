@@ -204,7 +204,7 @@ const SLAB = { x: 196, y: 0, w: 180, h: 552 }
 const RIGHT_X = 420
 const RIGHT_W = W - RIGHT_X
 const PROVIDERS: Group[] = [
-  { label: 'Service providers', y: 0, items: ['Data storage', 'Search API', 'Payment APIs', 'Voice-to-speech API'] },
+  { label: 'Service providers', y: 0, items: ['Data storage', 'Search APIs', 'Payment APIs', 'Voice-to-speech APIs'] },
   { label: 'Data providers', y: 228, items: ['Data sources written for people', 'Data sources written for agents', 'Data APIs'] },
   { label: 'Public providers', y: 412, items: ['Open source software', 'Custom agents'] },
 ]

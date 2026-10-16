@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import type { CSSProperties } from 'react'
 import { AfterDiagram, BeforeDiagram } from './Diagrams'
 import { Demo } from './Demo'
+import { Economics } from './Economics'
 
 const A = '/assets/'
 const i = (n: number) => ({ '--i': n }) as CSSProperties
@@ -73,6 +74,29 @@ function usePauseLoopsForReducedMotion() {
   }, [])
 }
 
+/**
+ * Dim the sea as the hero scrolls away: one flat layer over the fixed footage whose opacity follows the scroll, so
+ * every chapter below sits on the same moving water with no edges between them.
+ */
+function useDimSeaOnScroll() {
+  useEffect(() => {
+    const dim = document.querySelector<HTMLElement>('.sea-dim')
+    const hero = document.querySelector<HTMLElement>('.hero')
+    if (!dim || !hero) return
+    // scroll events already arrive once per frame; one opacity write each is cheap
+    const update = () => {
+      dim.style.opacity = String(Math.min(Math.max(window.scrollY / (hero.offsetHeight * 0.85), 0), 1))
+    }
+    update()
+    window.addEventListener('scroll', update, { passive: true })
+    window.addEventListener('resize', update)
+    return () => {
+      window.removeEventListener('scroll', update)
+      window.removeEventListener('resize', update)
+    }
+  }, [])
+}
+
 function Header() {
   return (
     <header className="header">
@@ -97,6 +121,7 @@ function Hero() {
         <source src={A + 'pacific-background-4k.mp4'} type="video/mp4" media="(min-width: 1024px)" />
         <source src={A + 'pacific-background-hd.mp4'} type="video/mp4" />
       </video>
+      <div className="sea-dim" aria-hidden="true" />
       <Header />
       <div className="hero-copy">
         <h1 className="title lines">
@@ -139,14 +164,25 @@ function Chapters() {
   return (
     <>
       <section className="chapter interaction" id="demo" aria-labelledby="interaction-head">
-        <h2 id="interaction-head" data-reveal>Agent-to-agent Interaction</h2>
+        <h2 id="interaction-head" data-reveal>Agent-to-agent Interaction Demo</h2>
         <Demo />
       </section>
       <section className="chapter economics" id="economics" aria-labelledby="economics-head">
-        <h2 id="economics-head" data-reveal>First customer and economics</h2>
+        <h2 id="economics-head" data-reveal>First customers and economics</h2>
+        <Economics />
       </section>
       <section className="chapter future" id="future" aria-labelledby="future-head">
         <h2 id="future-head" data-reveal>Future</h2>
+        <div className="future-copy">
+          <p className="future-lede" data-reveal style={i(1)}>
+            Personal and autonomous agents are becoming the new interfaces to the digital economy. Yet, the
+            infrastructure enabling them to discover, access and transact with other services remains fragmented
+            and underdeveloped.
+          </p>
+          <p className="future-close" data-reveal style={i(2)}>
+            The time to build the foundational infrastructure that will power the agent economy is now.
+          </p>
+        </div>
       </section>
     </>
   )
@@ -156,11 +192,12 @@ export default function App() {
   useReveal()
   useDrawDiagrams()
   usePauseLoopsForReducedMotion()
+  useDimSeaOnScroll()
   return (
     <>
       <main>
         <Hero />
-        {/* The comparison shares the sea's background before the next chapters. */}
+        {/* The sea runs on under every chapter, each on its own flat field of colour. */}
         <div className="board">
           <BeforeAfter />
         </div>

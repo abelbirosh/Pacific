@@ -6,8 +6,9 @@
 
 const COOKIE = 'pacific-gate'
 const MONTH = 60 * 60 * 24 * 30
-// the gate's own backdrop has to load before anyone is in
-const OPEN_PATHS = new Set(['/favicon.svg', '/assets/pacific-sea-poster.jpg'])
+// the gate's own backdrop, and the link-preview image, have to load before anyone is in
+const SHARE_IMAGE = '/assets/pacific-share.jpg'
+const OPEN_PATHS = new Set(['/favicon.svg', '/assets/pacific-sea-poster.jpg', SHARE_IMAGE])
 
 async function token(password: string) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`pacific:${password}`))
@@ -22,7 +23,20 @@ function cookie(request: Request, name: string) {
   return undefined
 }
 
-function page(wrong: boolean) {
+/** The gate is all a link previewer ever sees, so it carries the page's share card: the sea, at an absolute URL. */
+function shareTags(origin: string) {
+  return `<meta property="og:type" content="website" />
+<meta property="og:title" content="Pacific" />
+<meta property="og:description" content="The infrastructure for agent-to-agent services" />
+<meta property="og:image" content="${origin}${SHARE_IMAGE}" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Dark ocean swell at dusk" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="${origin}${SHARE_IMAGE}" />`
+}
+
+function page(wrong: boolean, origin: string) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -30,6 +44,7 @@ function page(wrong: boolean) {
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="robots" content="noindex" />
 <title>Pacific</title>
+${shareTags(origin)}
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 <link href="https://api.fontshare.com/v2/css?f[]=switzer@400,500,600&display=swap" rel="stylesheet" />
 <style>
@@ -69,9 +84,10 @@ function page(wrong: boolean) {
 </html>`
 }
 
-function gate(wrong: boolean) {
-  return new Response(page(wrong), {
-    status: 401,
+function gate(wrong: boolean, origin: string) {
+  // a first visit answers 200, because link previewers only read pages that succeed; a wrong password is a 401
+  return new Response(page(wrong, origin), {
+    status: wrong ? 401 : 200,
     headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
   })
 }
@@ -88,7 +104,7 @@ export default async function middleware(request: Request) {
   if (url.pathname === '/unlock' && request.method === 'POST') {
     const form = await request.formData()
     const given = String(form.get('password') ?? '').trim().toLowerCase()
-    if ((await token(given)) !== expected) return gate(true)
+    if ((await token(given)) !== expected) return gate(true, url.origin)
     return new Response(null, {
       status: 303,
       headers: {
@@ -99,5 +115,5 @@ export default async function middleware(request: Request) {
   }
 
   if (cookie(request, COOKIE) === expected) return
-  return gate(false)
+  return gate(false, url.origin)
 }
