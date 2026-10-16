@@ -53,10 +53,10 @@ export function Economics() {
       <div className="econ-block" data-reveal>
         <h3 className="econ-head">First customers</h3>
         <div className="econ-distribution">
-          <p className="econ-spend">Distribution <span>free to list</span></p>
+          <p className="econ-spend">Discovery is free</p>
           <p className="econ-who">
-            <strong>Providers</strong>, from enterprise endpoints to independent developers, publish once and get
-            distribution to every agent on the network, and a way to get paid.
+            <strong>That is the distribution strategy.</strong> Providers, from enterprise endpoints to independent
+            developers, list once and reach every agent on the network, with a way to get paid.
           </p>
         </div>
         <ol className="econ-customers">

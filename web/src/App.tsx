@@ -74,6 +74,29 @@ function usePauseLoopsForReducedMotion() {
   }, [])
 }
 
+/**
+ * Dim the sea as the hero scrolls away: one flat layer over the fixed footage whose opacity follows the scroll, so
+ * every chapter below sits on the same moving water with no edges between them.
+ */
+function useDimSeaOnScroll() {
+  useEffect(() => {
+    const dim = document.querySelector<HTMLElement>('.sea-dim')
+    const hero = document.querySelector<HTMLElement>('.hero')
+    if (!dim || !hero) return
+    // scroll events already arrive once per frame; one opacity write each is cheap
+    const update = () => {
+      dim.style.opacity = String(Math.min(Math.max(window.scrollY / (hero.offsetHeight * 0.85), 0), 1))
+    }
+    update()
+    window.addEventListener('scroll', update, { passive: true })
+    window.addEventListener('resize', update)
+    return () => {
+      window.removeEventListener('scroll', update)
+      window.removeEventListener('resize', update)
+    }
+  }, [])
+}
+
 function Header() {
   return (
     <header className="header">
@@ -98,6 +121,7 @@ function Hero() {
         <source src={A + 'pacific-background-4k.mp4'} type="video/mp4" media="(min-width: 1024px)" />
         <source src={A + 'pacific-background-hd.mp4'} type="video/mp4" />
       </video>
+      <div className="sea-dim" aria-hidden="true" />
       <Header />
       <div className="hero-copy">
         <h1 className="title lines">
@@ -158,6 +182,7 @@ export default function App() {
   useReveal()
   useDrawDiagrams()
   usePauseLoopsForReducedMotion()
+  useDimSeaOnScroll()
   return (
     <>
       <main>

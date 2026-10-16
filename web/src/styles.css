@@ -14,11 +14,6 @@
   --coral: #ff3b1f;
   --diagram-panel: #29414e;
   --diagram-chip: #446477;
-  /* flat fields laid over the moving sea, one per chapter */
-  --field-board: rgb(14 23 29 / 0.78);
-  --field-demo: rgb(7 11 14 / 0.7);
-  --field-economics: rgb(23 67 90 / 0.82);
-  --field-future: rgb(14 23 29 / 0.86);
 
   --font: 'Switzer', ui-sans-serif, system-ui, sans-serif;
   /* the face of speedrun's own headlines, used only for the alpha speedrun lockup */
@@ -74,6 +69,9 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 }
 /* the sea is fixed to the window and runs under the whole page; each chapter below lays a flat field over it */
 .hero-video { position: fixed; inset: 0; z-index: -1; width: 100%; height: 100%; max-width: none; object-fit: cover; }
+/* one flat layer of sea over the footage, darkening as the hero scrolls away (opacity set in App), so the chapters
+   below share a single dim, moving ground with no edges between them */
+.sea-dim { position: fixed; inset: 0; z-index: -1; background: rgb(14 23 29 / 0.8); opacity: 0; pointer-events: none; }
 .hero > .header, .hero-copy { position: relative; z-index: 2; }
 
 .header { display: flex; align-items: center; gap: clamp(1rem, 3vw, 2.5rem); padding: 1.25rem 0; }
@@ -98,7 +96,7 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 /* ---------- the board ---------- */
 .board {
   display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--gap);
-  padding: var(--gap); background: var(--field-board);
+  padding: var(--gap);
 }
 /* each section is a row of the board and hands its tiles the board's own columns */
 .row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; gap: var(--gap); }
@@ -146,16 +144,12 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
   padding: clamp(4rem, 7vw, 7rem) var(--margin);
   color: var(--foam);
 }
-/* chapter by colour: the same moving sea under three flat fields, a step in tone at each edge */
-.interaction { background: var(--field-demo); }
-.economics { background: var(--field-economics); }
-.future { background: var(--field-future); }
 .chapter h2 { margin-inline: auto; text-align: center; font-size: clamp(2.5rem, 4.5vw, 4.5rem); line-height: 1.02; }
 
 /* ---------- the demo: one request clicked through Pacific's four stages, sized to fit one screen ---------- */
 .interaction { display: flex; flex-direction: column; justify-content: center; min-height: 100svh; padding-block: clamp(2rem, 4vh, 3.5rem); }
 .demo { width: 100%; max-width: 76rem; margin: clamp(1.25rem, 3vh, 2.25rem) auto 0; display: grid; gap: var(--gap); color: var(--paper); }
-.demo-request { padding: 1rem 1.25rem; padding-right: max(1.25rem, calc(100% - 70ch)); background: var(--tile); font-size: clamp(1.0625rem, 0.9rem + 0.5vw, 1.375rem); line-height: 1.3; letter-spacing: -0.015em; }
+.demo-request { padding: 1rem 1.25rem; background: var(--tile); font-size: clamp(1.0625rem, 0.9rem + 0.5vw, 1.375rem); line-height: 1.3; letter-spacing: -0.015em; }
 
 /* the rail echoes the bands in the diagram: the current stage is the solid one */
 .demo-rail { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap); }
@@ -269,7 +263,8 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 }
 
 .econ-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(1.5rem, 3vw, 2.5rem); }
-.econ-revenue { display: grid; gap: var(--gap); }
+.econ-split > .econ-block { grid-template-rows: auto 1fr; }
+.econ-revenue { display: grid; grid-template-rows: auto 1fr auto; gap: var(--gap); }
 .econ-revenue > div { padding: 1rem 1.25rem; background: var(--tile); }
 .econ-revenue dl { margin: 0.5rem 0 0; display: grid; gap: 0.375rem; }
 .econ-revenue dl div { display: flex; justify-content: space-between; gap: 1rem; font-size: 1rem; }
@@ -277,8 +272,8 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .econ-revenue dd { margin: 0; text-align: right; color: rgb(228 236 240 / 0.7); }
 
 /* scaling reads top to bottom, each stage growing out of the one above */
-.econ-phases { display: grid; gap: 2rem; }
-.econ-phases li { position: relative; display: grid; gap: 0.375rem; padding: 1rem 1.25rem; background: var(--tile); }
+.econ-phases { display: grid; grid-auto-rows: 1fr; gap: 2rem; }
+.econ-phases li { position: relative; display: grid; align-content: start; gap: 0.375rem; padding: 1rem 1.25rem; background: var(--tile); }
 .econ-phases li + li::before {
   content: '↓'; position: absolute; top: -1rem; left: 50%; transform: translate(-50%, -50%);
   font-size: 1.125rem; font-weight: 600; color: var(--foam);
