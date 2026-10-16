@@ -160,11 +160,9 @@ export default function App() {
   usePauseLoopsForReducedMotion()
   return (
     <>
-      {/* Slow currents of petrol light under everything below the hero. */}
-      <div className="sea-light" aria-hidden="true"><span /><span /><span /></div>
       <main>
         <Hero />
-        {/* The comparison shares the sea's background before the next chapters. */}
+        {/* The sea runs on under every chapter, each on its own flat field of colour. */}
         <div className="board">
           <BeforeAfter />
         </div>

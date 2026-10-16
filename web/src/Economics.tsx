@@ -5,9 +5,9 @@
  */
 
 const CUSTOMERS = [
-  { tag: 'First', who: 'AI startups', what: 'building research, enrichment and automation agents', spend: '$500–$5K', why: 'Less integration work, services picked on the fly' },
-  { tag: 'Second', who: 'Independent agent developers', what: 'building on their own', spend: '$1–$30', why: 'Free discovery, minimal setup' },
-  { tag: 'Third', who: 'Enterprises', what: 'deploying production agents', spend: '$10K+', why: 'One point of access, spending controls, an audit trail' },
+  { who: 'AI startups', what: 'building research, enrichment and automation agents', spend: '$500–$5K', why: 'Less integration work, services picked on the fly' },
+  { who: 'Independent agent developers', what: 'building on their own', spend: '$1–$30', why: 'Free discovery, minimal setup' },
+  { who: 'Enterprises', what: 'deploying production agents', spend: '$10K+', why: 'One point of access, spending controls, an audit trail' },
 ]
 
 const REVENUE: { group: string; items: [string, string][]; expansion?: boolean }[] = [
@@ -53,8 +53,7 @@ export function Economics() {
       <div className="econ-block" data-reveal>
         <h3 className="econ-head">First customers</h3>
         <div className="econ-distribution">
-          <span className="econ-tag">Distribution</span>
-          <p className="econ-spend">Free <span>to list</span></p>
+          <p className="econ-spend">Distribution <span>free to list</span></p>
           <p className="econ-who">
             <strong>Providers</strong>, from enterprise endpoints to independent developers, publish once and get
             distribution to every agent on the network, and a way to get paid.
@@ -63,7 +62,6 @@ export function Economics() {
         <ol className="econ-customers">
           {CUSTOMERS.map((c) => (
             <li key={c.who}>
-              <span className="econ-tag">{c.tag}</span>
               <p className="econ-spend">{c.spend} <span>/ month</span></p>
               <p className="econ-who"><strong>{c.who}</strong> {c.what}</p>
               <p className="econ-why">{c.why}</p>
@@ -78,7 +76,7 @@ export function Economics() {
           <div className="econ-revenue">
             {REVENUE.map((r) => (
               <div key={r.group} className={r.expansion ? 'is-expansion' : undefined}>
-                <span className="econ-tag">{r.group}</span>
+                <h4 className="econ-group">{r.group}</h4>
                 <dl>
                   {r.items.map(([k, v]) => (
                     <div key={k}><dt>{k}</dt><dd>{v}</dd></div>
@@ -92,9 +90,8 @@ export function Economics() {
         <div className="econ-block" data-reveal>
           <h3 className="econ-head">Scaling</h3>
           <ol className="econ-phases">
-            {PHASES.map((p, n) => (
+            {PHASES.map((p) => (
               <li key={p.name} className={p.expansion ? 'is-expansion' : undefined}>
-                <span className="econ-tag">{String(n + 1).padStart(2, '0')}</span>
                 <p className="econ-phase-name">{p.name}</p>
                 <p className="econ-phase-does">{p.does}</p>
                 <p className="econ-phase-target">{p.target}</p>
