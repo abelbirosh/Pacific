@@ -32,12 +32,10 @@ const PHASES = [
   {
     name: 'Validate the network',
     does: 'A curated catalog, self-hosted endpoint registration, integration requests and limited managed transactions.',
-    target: '10 paying production developers · 10–20 provider integrations',
   },
   {
     name: 'Scale the marketplace',
     does: 'Self-service publishing, automated validation of new services, and smarter routing between providers.',
-    target: 'Positive contribution margin per transaction · growing wallet-funded GMV',
   },
   {
     name: 'Host and sell agents',
@@ -94,7 +92,7 @@ export function Economics() {
               <li key={p.name} className={p.expansion ? 'is-expansion' : undefined}>
                 <p className="econ-phase-name">{p.name}</p>
                 <p className="econ-phase-does">{p.does}</p>
-                <p className="econ-phase-target">{p.target}</p>
+                {p.target && <p className="econ-phase-target">{p.target}</p>}
               </li>
             ))}
           </ol>
