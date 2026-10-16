@@ -60,7 +60,7 @@ export function Economics() {
         <ol className="econ-customers">
           {CUSTOMERS.map((c) => (
             <li key={c.who}>
-              <p className="econ-spend">{c.spend} <span>/ month</span></p>
+              <p className="econ-spend">{c.spend}<span>/ month in spend</span></p>
               <p className="econ-who"><strong>{c.who}</strong> {c.what}</p>
               <p className="econ-why">{c.why}</p>
             </li>
