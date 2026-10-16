@@ -173,6 +173,16 @@ function Chapters() {
       </section>
       <section className="chapter future" id="future" aria-labelledby="future-head">
         <h2 id="future-head" data-reveal>Future</h2>
+        <div className="future-copy">
+          <p className="future-lede" data-reveal style={i(1)}>
+            Personal and autonomous agents are becoming the new interfaces to the digital economy. Yet, the
+            infrastructure enabling them to discover, access and transact with other services remains fragmented
+            and underdeveloped.
+          </p>
+          <p className="future-close" data-reveal style={i(2)}>
+            The time to build the foundational infrastructure that will power the agent economy is now.
+          </p>
+        </div>
       </section>
     </>
   )
