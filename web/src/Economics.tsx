@@ -18,7 +18,7 @@ const REVENUE: { group: string; items: [string, string][]; expansion?: boolean }
       ['Facilitated transactions', '5% target take rate'],
       ['Prepaid credits', 'Same rate, budgets set per agent'],
       ['Pay-as-you-go', 'Metered, one consolidated bill'],
-      ['Request Integration', 'Metered routing after the allowance'],
+      ['Request Integration', 'Metered routing'],
     ],
   },
   {
@@ -31,7 +31,7 @@ const REVENUE: { group: string; items: [string, string][]; expansion?: boolean }
 const PHASES = [
   {
     name: 'Validate the network',
-    does: 'A curated catalog, self-hosted endpoint registration, bring-your-own-keys access and limited managed transactions.',
+    does: 'A curated catalog, self-hosted endpoint registration, integration requests and limited managed transactions.',
     target: '10 paying production developers · 10–20 provider integrations',
   },
   {
