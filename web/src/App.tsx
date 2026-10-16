@@ -139,7 +139,7 @@ function Chapters() {
   return (
     <>
       <section className="chapter interaction" id="demo" aria-labelledby="interaction-head">
-        <h2 id="interaction-head" data-reveal>Agent-to-agent Interaction</h2>
+        <h2 id="interaction-head" data-reveal>Agent-to-agent Interaction Demo</h2>
         <Demo />
       </section>
       <section className="chapter economics" id="economics" aria-labelledby="economics-head">
