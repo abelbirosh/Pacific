@@ -297,9 +297,9 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 
 .future { padding-bottom: clamp(5rem, 10vw, 10rem); }
 /* the close: the argument in a statement, then the one line the page ends on */
-.future-copy { max-width: 46rem; margin: var(--head-gap) auto 0; display: grid; gap: clamp(1.75rem, 3vw, 2.5rem); text-align: center; text-wrap: balance; }
-.future-lede { font-size: clamp(1.25rem, 1rem + 0.9vw, 1.75rem); font-weight: 500; line-height: 1.35; letter-spacing: -0.02em; color: var(--foam); }
-.future-close { font-size: clamp(1.625rem, 1.2rem + 1.4vw, 2.25rem); font-weight: 600; line-height: 1.2; letter-spacing: -0.03em; color: var(--paper); }
+.future-copy { max-width: 76rem; margin: var(--head-gap) auto 0; display: grid; gap: clamp(1.75rem, 3vw, 2.5rem); text-align: center; text-wrap: balance; }
+.future-lede { font-size: clamp(1.25rem, 0.85rem + 1.3vw, 2.125rem); font-weight: 500; line-height: 1.35; letter-spacing: -0.02em; color: var(--foam); }
+.future-close { font-size: clamp(1.625rem, 1.1rem + 1.6vw, 2.5rem); font-weight: 600; line-height: 1.2; letter-spacing: -0.03em; color: var(--paper); }
 
 /* ---------- motion: masked title, tiles arriving in order, wires drawing in ---------- */
 @media (prefers-reduced-motion: no-preference) {
