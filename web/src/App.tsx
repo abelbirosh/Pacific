@@ -144,7 +144,7 @@ function Chapters() {
         <Demo />
       </section>
       <section className="chapter economics" id="economics" aria-labelledby="economics-head">
-        <h2 id="economics-head" data-reveal>First customer and economics</h2>
+        <h2 id="economics-head" data-reveal>First customers and economics</h2>
         <Economics />
       </section>
       <section className="chapter future" id="future" aria-labelledby="future-head">
