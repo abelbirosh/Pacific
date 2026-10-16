@@ -1,7 +1,7 @@
 /*
  * First customers and economics, compressed from the business and scaling plan (October 2026). Only the numbers and
  * the structure are kept: who pays and how much, what is free and what is charged, and how the network grows into
- * hosting agents. Spend ranges and the 5% take rate are hypotheses.
+ * hosting agents and a marketplace for them. Spend ranges and the 5% take rate are hypotheses.
  */
 
 const CUSTOMERS = [
@@ -24,7 +24,7 @@ const REVENUE: { group: string; items: [string, string][]; expansion?: boolean }
   {
     group: 'Expansion',
     expansion: true,
-    items: [['Hosted agents and endpoints', 'Usage-based compute and storage']],
+    items: [['Hosted agents and endpoints', 'Usage-based compute and storage'], ['Agent marketplace', 'Commission on sales']],
   },
 ]
 
@@ -40,8 +40,8 @@ const PHASES = [
     target: 'Positive contribution margin per transaction · growing wallet-funded GMV',
   },
   {
-    name: 'Host the agents',
-    does: 'Agents and endpoints run on Pacific’s servers: hosting, deployment, scheduling and execution environments.',
+    name: 'Host and sell agents',
+    does: 'Agents and endpoints run on Pacific’s servers, and a marketplace lets third parties sell agents, workflows and services to the network.',
     target: 'Pacific’s agent host already runs five agents that sell skills to each other in this prototype',
     expansion: true,
   },
