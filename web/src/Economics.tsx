@@ -18,7 +18,7 @@ const REVENUE: { group: string; items: [string, string][]; expansion?: boolean }
       ['Facilitated transactions', '5% target take rate'],
       ['Prepaid credits', 'Same rate, budgets set per agent'],
       ['Pay-as-you-go', 'Metered, one consolidated bill'],
-      ['Bring your own keys', 'Metered routing after the allowance'],
+      ['Request Integration', 'Metered routing after the allowance'],
     ],
   },
   {
