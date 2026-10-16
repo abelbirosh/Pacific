@@ -89,10 +89,39 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 .alpha-word { font-size: 1.14em; line-height: 0.82; letter-spacing: -0.01em; }
 .alpha-run { font-size: 0.27em; line-height: 1; letter-spacing: 0.02em; margin-top: 0.12em; margin-right: 0.04em; }
 
+/* ---------- the ground below the hero: the sea's own colours, drifting ---------- */
+/* Three wide fields of petrol light, each on its own slow, unrelated cycle, so the ground never sits still and
+   never visibly repeats. It is fixed to the window, so scrolling moves the page across the water as well. */
+.sea-light { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; background: var(--sea); }
+.sea-light span { position: absolute; width: 90vmax; height: 90vmax; border-radius: 50%; will-change: transform, opacity; }
+.sea-light span:nth-child(1) { left: -35vmax; top: -40vmax; background: radial-gradient(closest-side, rgb(23 67 90 / 0.85), rgb(23 67 90 / 0)); }
+.sea-light span:nth-child(2) { right: -40vmax; top: -10vmax; background: radial-gradient(closest-side, rgb(42 115 145 / 0.4), rgb(42 115 145 / 0)); }
+.sea-light span:nth-child(3) { left: -10vmax; bottom: -55vmax; background: radial-gradient(closest-side, rgb(20 84 98 / 0.7), rgb(20 84 98 / 0)); }
+@media (prefers-reduced-motion: no-preference) {
+  .sea-light span:nth-child(1) { animation: current-a 47s ease-in-out infinite alternate; }
+  .sea-light span:nth-child(2) { animation: current-b 61s ease-in-out infinite alternate; }
+  .sea-light span:nth-child(3) { animation: current-c 73s ease-in-out infinite alternate; }
+}
+@keyframes current-a {
+  0% { transform: translate(0, 0) scale(1); opacity: 1; }
+  50% { transform: translate(38vw, 22vh) scale(1.2); opacity: 0.7; }
+  100% { transform: translate(12vw, 48vh) scale(0.9); opacity: 1; }
+}
+@keyframes current-b {
+  0% { transform: translate(0, 0) scale(1.1); opacity: 0.6; }
+  50% { transform: translate(-30vw, 35vh) scale(0.9); opacity: 1; }
+  100% { transform: translate(-55vw, 5vh) scale(1.15); opacity: 0.8; }
+}
+@keyframes current-c {
+  0% { transform: translate(0, 0) scale(0.95); opacity: 0.9; }
+  50% { transform: translate(45vw, -25vh) scale(1.15); opacity: 0.6; }
+  100% { transform: translate(20vw, -50vh) scale(1); opacity: 1; }
+}
+
 /* ---------- the board ---------- */
 .board {
   display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--gap);
-  padding: var(--gap); background: var(--sea);
+  padding: var(--gap); background: linear-gradient(to bottom, var(--sea), transparent 40svh);
 }
 /* each section is a row of the board and hands its tiles the board's own columns */
 .row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; gap: var(--gap); }
@@ -143,7 +172,7 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 /* Heading-only chapters, ready for the next content pass. */
 .chapter {
   padding: clamp(4rem, 7vw, 7rem) var(--margin);
-  background: var(--sea); color: var(--foam);
+  color: var(--foam);
 }
 .chapter h2 { margin-inline: auto; text-align: center; font-size: clamp(2.5rem, 4.5vw, 4.5rem); line-height: 1.02; }
 
