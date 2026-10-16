@@ -24,7 +24,7 @@ const REVENUE: { group: string; items: [string, string][]; expansion?: boolean }
   {
     group: 'Expansion',
     expansion: true,
-    items: [['Hosted agents and endpoints', 'Usage-based compute and storage'], ['Enterprise governance', 'Subscription or contract']],
+    items: [['Hosted agents and endpoints', 'Usage-based compute and storage']],
   },
 ]
 
@@ -41,7 +41,7 @@ const PHASES = [
   },
   {
     name: 'Host the agents',
-    does: 'Agents and endpoints run on Pacific’s servers: hosting, deployment, scheduling, execution environments and enterprise governance.',
+    does: 'Agents and endpoints run on Pacific’s servers: hosting, deployment, scheduling and execution environments.',
     target: 'Pacific’s agent host already runs five agents that sell skills to each other in this prototype',
     expansion: true,
   },
