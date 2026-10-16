@@ -23,15 +23,15 @@ function cookie(request: Request, name: string) {
   return undefined
 }
 
-/** The gate is all a link previewer ever sees, so it carries the page's share card: the sea, at an absolute URL. */
+/** The gate is all a link previewer ever sees, so it carries the page's share card: the hero's first screen, at an absolute URL. */
 function shareTags(origin: string) {
   return `<meta property="og:type" content="website" />
-<meta property="og:title" content="Pacific" />
+<meta property="og:title" content="Pacific x alpha speedrun demo" />
 <meta property="og:description" content="The infrastructure for agent-to-agent services" />
 <meta property="og:image" content="${origin}${SHARE_IMAGE}" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="Dark ocean swell at dusk" />
+<meta property="og:image:alt" content="Pacific x alpha speedrun demo, over a dark ocean swell" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:image" content="${origin}${SHARE_IMAGE}" />`
 }
