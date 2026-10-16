@@ -280,11 +280,10 @@ h1, h2 { font-weight: 600; letter-spacing: -0.04em; line-height: 0.95; text-wrap
 }
 .econ-phase-name { font-size: 1.125rem; font-weight: 600; letter-spacing: -0.025em; }
 .econ-phase-does { font-size: 1rem; line-height: 1.45; color: rgb(228 236 240 / 0.8); }
-.econ-phase-target { font-size: var(--step-small); line-height: 1.45; color: rgb(228 236 240 / 0.6); }
 
 /* the expansion, hosted agents, is the one light thing in the section */
 .econ .is-expansion { background: #eef3f6; color: var(--ink); }
-.econ .is-expansion dd, .econ .is-expansion .econ-phase-target { color: rgb(11 18 24 / 0.6); }
+.econ .is-expansion dd { color: rgb(11 18 24 / 0.6); }
 .econ .is-expansion .econ-phase-does { color: rgb(11 18 24 / 0.85); }
 
 @media (max-width: 900px) {

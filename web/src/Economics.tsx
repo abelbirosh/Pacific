@@ -40,7 +40,6 @@ const PHASES = [
   {
     name: 'Host and sell agents',
     does: 'Agents and endpoints run on Pacific’s servers, and a marketplace lets third parties sell agents, workflows and services to the network.',
-    target: 'Pacific’s agent host already runs five agents that sell skills to each other in this prototype',
     expansion: true,
   },
 ]
@@ -92,7 +91,6 @@ export function Economics() {
               <li key={p.name} className={p.expansion ? 'is-expansion' : undefined}>
                 <p className="econ-phase-name">{p.name}</p>
                 <p className="econ-phase-does">{p.does}</p>
-                {p.target && <p className="econ-phase-target">{p.target}</p>}
               </li>
             ))}
           </ol>
