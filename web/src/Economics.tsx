@@ -28,18 +28,19 @@ const REVENUE: { group: string; items: [string, string][]; expansion?: boolean }
   },
 ]
 
+// worded with the revenue model's own terms, so each stage reads as the next part of it switching on
 const PHASES = [
   {
     name: 'Validate the network',
-    does: 'A curated catalog, self-hosted endpoint registration, integration requests and limited managed transactions.',
+    does: 'Free discovery and publishing on a curated catalog of providers, with the first facilitated transactions on prepaid credits.',
   },
   {
-    name: 'Scale the marketplace',
-    does: 'Self-service publishing, automated validation of new services, and smarter routing between providers.',
+    name: 'Scale the network',
+    does: 'Providers publish themselves, new services are checked automatically, and routing picks the best provider for each call.',
   },
   {
     name: 'Host and sell agents',
-    does: 'Agents and endpoints run on Pacific’s servers, and a marketplace lets third parties sell agents, workflows and services to the network.',
+    does: 'Hosted agents and endpoints run on Pacific’s servers, and the agent marketplace lets third parties sell agents, workflows and services.',
     expansion: true,
   },
 ]
