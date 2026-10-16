@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import type { CSSProperties } from 'react'
 import { AfterDiagram, BeforeDiagram } from './Diagrams'
 import { Demo } from './Demo'
+import { Economics } from './Economics'
 
 const A = '/assets/'
 const i = (n: number) => ({ '--i': n }) as CSSProperties
@@ -144,6 +145,7 @@ function Chapters() {
       </section>
       <section className="chapter economics" id="economics" aria-labelledby="economics-head">
         <h2 id="economics-head" data-reveal>First customer and economics</h2>
+        <Economics />
       </section>
       <section className="chapter future" id="future" aria-labelledby="future-head">
         <h2 id="future-head" data-reveal>Future</h2>
