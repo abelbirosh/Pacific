@@ -207,13 +207,20 @@ class Ledger:
 
     def escrow_payout(self, conn: sqlite3.Connection, escrow_id: str, seller_id: str, buyer_id: str,
                       buyer_job_id: str | None, release: int, refund: int, memo: str, call_id: str) -> None:
-        """Move a contract's premium out of escrow: `release` to the seller, `refund` to the buyer."""
+        """Move a contract's premium out of escrow: `release` to the seller, `refund` to the buyer.
+
+        The refund also gives the buyer's job back that much spend, unless that job is itself a hire
+        that has already been billed to its own buyer: its spend is what that bill was worked out
+        from, so a late refund just goes to the buyer's wallet."""
         if release:
             self.transfer(conn, escrow_id, seller_id, release, memo, "escrow_release", call_id, buyer_job_id)
         if refund:
-            self.transfer(conn, escrow_id, buyer_id, refund, memo, "escrow_refund", call_id, buyer_job_id)
-            if buyer_job_id:
-                conn.execute("UPDATE jobs SET spent = spent - ? WHERE id = ?", (refund, buyer_job_id))
+            billed = buyer_job_id and conn.execute(
+                "SELECT 1 FROM calls WHERE child_job_id = ? AND status != 'pending'", (buyer_job_id,)).fetchone()
+            job = None if billed else buyer_job_id
+            self.transfer(conn, escrow_id, buyer_id, refund, memo, "escrow_refund", call_id, job)
+            if job:
+                conn.execute("UPDATE jobs SET spent = spent - ? WHERE id = ?", (refund, job))
 
     def open_job(
         self,

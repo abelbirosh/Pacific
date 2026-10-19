@@ -79,3 +79,17 @@ def test_soak(market):
     tasks = int(os.environ["PACIFIC_SOAK"])
     report = drive(market, "chaos", limit_s=60 + tasks * 2, tasks=tasks, concurrency=48, rate=20, seed=5)
     assert_healthy(report)
+
+
+def test_impossible_tasks_are_marked_and_only_drawn_when_asked():
+    plain, again = Workload(seed=9), Workload(seed=9, impossible_rate=0.0)
+    for _ in range(30):
+        assert plain.next().spec == again.next().spec  # no extra draws without the option
+    w = Workload(seed=9, impossible_rate=1.0, mix={"database": 0.5, "code_run": 0.5}, pipeline_rate=0)
+    made = [w.next() for _ in range(20)]
+    assert all(g.meta.get("impossible") for g in made)
+    assert {g.meta["impossible_how"] for g in made} == {"more_rows", "wrong_total", "wrong_output"}
+    for g in made:
+        if g.meta["impossible_how"] == "more_rows":
+            rows = g.meta["rows"]
+            assert next(c for c in g.spec["checks"] if c["type"] == "db_min_rows")["min"] > rows

@@ -158,6 +158,19 @@ class Contracts:
                 break
         self.settle(contract_id, promise, checks, results)
 
+    async def wait_settled(self, job_id: str, limit_s: float) -> None:
+        """Wait (up to limit_s) for contracts made from inside this job's subtree to settle, so a hire is
+        billed for its seller's spend net of any premiums that seller got back."""
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < limit_s:
+            row = self.db.one(
+                "WITH RECURSIVE sub(id) AS (SELECT ? UNION ALL SELECT j.id FROM jobs j JOIN sub ON j.parent_job_id = sub.id) "
+                "SELECT 1 FROM contracts WHERE buyer_job_id IN (SELECT id FROM sub) "
+                "AND status IN ('working', 'verifying') LIMIT 1", (job_id,))
+            if row is None:
+                return
+            await asyncio.sleep(0.05)
+
     def _context(self, c) -> CheckContext:
         job = self.ledger.job_status(c["child_job_id"])
         used = {r["service"] for r in self.db.all(

@@ -33,6 +33,7 @@ class TrafficConfig:
     personas: list[str] | None = None  # override every task's persona with one of these
     research: bool = True            # include research tasks (needs offline search or the internet)
     delegate_rate: float = 0.1       # share of single-skill tasks marked for hiring another agent
+    impossible_rate: float = 0.0     # share of database / code_run tasks given a check no work can meet
     check_every_s: float = 2.0
     task_timeout_s: float = 600
     settle_timeout_s: float = 600    # how long to wait for contracts to finish verifying
@@ -55,11 +56,13 @@ class TaskRecord:
     depth: int = 0
     error: str | None = None
     sim: dict = field(default_factory=dict)
+    contracts: list = field(default_factory=list)  # ids of the contracts in the task's tree
 
 
 async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, progress=None) -> dict:
     rng = random.Random(cfg.seed)
-    workload = Workload(seed=cfg.seed, research=cfg.research, delegate_rate=cfg.delegate_rate)
+    workload = Workload(seed=cfg.seed, research=cfg.research, delegate_rate=cfg.delegate_rate,
+                        impossible_rate=cfg.impossible_rate)
     agents = secrets["agents"]
     owner_key = {aid: secrets["people"][a["owner"]]["key"] for aid, a in agents.items()}
     records: list[TaskRecord] = []
@@ -95,6 +98,7 @@ async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, prog
                 rec.status, rec.spent = report["status"], report["spent"]["wd"]
                 rec.depth = max((c["depth"] for c in report["calls"]), default=0)
                 rec.sim = report.get("artifacts", {}).get("sim", {})
+                rec.contracts = [c["id"] for c in report.get("contracts", [])]
                 if rec.status != "passed":
                     rec.error = (report.get("output") or "")[:300]
             except httpx.HTTPError as e:
@@ -155,7 +159,8 @@ async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, prog
         await admin.aclose()
         await http.aclose()
     report = summarize(records, list(violations.values()), wall, cfg, audit, final.get("counts", {}))
-    report["contracts"] = contract_report(book, ranks, records, settle_s)
+    personas = {aid: a["brain"].partition(":")[2] or a["brain"] for aid, a in agents.items()}
+    report["contracts"] = contract_report(book, ranks, records, settle_s, personas)
     return report
 
 
@@ -175,11 +180,15 @@ async def settle(admin: httpx.AsyncClient, timeout_s: float) -> float:
     return round(time.monotonic() - t0, 2)
 
 
-def contract_report(book: dict, ranks: list[dict], records: list["TaskRecord"], settle_s: float) -> dict:
+def contract_report(book: dict, ranks: list[dict], records: list["TaskRecord"], settle_s: float,
+                    personas: dict[str, str] | None = None) -> dict:
     contracts = book["contracts"]
     by: dict[str, dict] = {}
     for c in contracts:
-        for key in (f"tier:{c['tier']}", f"payment:{c['payment']}"):
+        keys = [f"tier:{c['tier']}", f"payment:{c['payment']}"]
+        if personas:
+            keys.append(f"seller:{personas.get(c['seller_id'], '?')}")
+        for key in keys:
             g = by.setdefault(key, {"n": 0, "statuses": Counter(), "premium": 0.0, "released": 0.0, "refunded": 0.0})
             g["n"] += 1
             g["statuses"][c["status"]] += 1
@@ -198,12 +207,16 @@ def contract_report(book: dict, ranks: list[dict], records: list["TaskRecord"], 
         for status, n in (r.sim.get("refused_hires") or {}).items():
             refused[status] += n
     attempts = Counter(c["attempts"] for c in contracts if c["status"] != "declined")
+    final = {c["id"]: c["status"] for c in contracts}  # a task's report can predate its contracts' verdicts
+    on_tasks = {label: dict(Counter(final.get(i, "?") for r in records if r.impossible == flag for i in r.contracts))
+                for label, flag in (("possible", False), ("impossible", True))}
     return {
         **book["summary"],
         "settle_wait_s": settle_s,
         "by_group": groups,
         "verification_attempts": dict(sorted(attempts.items())),
         "refused_hires_by_status": dict(refused),
+        "by_task": on_tasks,
         "rankings": [{k: r[k] for k in ("rank", "service", "tier", "payment", "provider", "hires", "settled",
                                         "passed", "partial", "failed", "unverified", "declined", "success",
                                         "accuracy", "on_time", "score")} for r in ranks],
@@ -335,6 +348,7 @@ def format_contracts(c: dict) -> list[str]:
         f"{c['refunded_wd']:.4f} refunded to buyers, {c['in_escrow_wd']:.4f} still in escrow",
         f"verification runs per contract: {c['verification_attempts']}   refused hires by status: "
         f"{c['refused_hires_by_status'] or '{}'}",
+        f"contracts on possible tasks: {c['by_task']['possible']}   on impossible tasks: {c['by_task']['impossible']}",
     ]
     for key, g in c["by_group"].items():
         rate = "-" if g["pass_rate"] is None else f"{g['pass_rate']:.0%}"

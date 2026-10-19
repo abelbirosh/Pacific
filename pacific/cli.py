@@ -130,7 +130,8 @@ def cmd_sim(args, config: Config):
     cfg = TrafficConfig(tasks=args.tasks, duration_s=args.duration, rate=args.rate, concurrency=args.concurrency,
                         seed=args.seed, think_scale=args.think_scale,
                         personas=args.personas.split(",") if args.personas else None,
-                        research=not args.no_research, delegate_rate=args.delegate_rate)
+                        research=not args.no_research, delegate_rate=args.delegate_rate,
+                        impossible_rate=args.impossible_rate)
 
     def progress(r):
         if not args.quiet:
@@ -307,7 +308,9 @@ def main(argv: list[str] | None = None):
 
     s = sub.add_parser("sim", help="drive concurrent, realistic agent traffic and check the economy holds up")
     s.add_argument("--boot", action="store_true", help="run against a fresh throwaway economy (offline search)")
-    s.add_argument("--brain", default="sim", help="with --boot: agents' brain (default: a mix of personas)")
+    s.add_argument("--brain", default="sim",
+                   help='with --boot: agents\' brain: "sim" (a mix of personas), "sim:<persona>", or '
+                        '"sim:a,b,c" to deal out just those (e.g. sim:shirker,careful,frugal,delegator,spendthrift)')
     s.add_argument("--online", action="store_true", help="with --boot: search the real internet")
     s.add_argument("--tasks", type=int, default=50, help="tasks to send (0: run for --duration)")
     s.add_argument("--duration", type=float, default=0, help="seconds to keep sending tasks")
@@ -320,6 +323,8 @@ def main(argv: list[str] | None = None):
     s.add_argument("--no-research", action="store_true", help="skip research tasks (servers without search)")
     s.add_argument("--delegate-rate", type=float, default=0.1,
                    help="share of tasks that hire another agent (default 0.1); more hires, more contracts")
+    s.add_argument("--impossible-rate", type=float, default=0.0,
+                   help="share of database / code_run tasks given a check no honest work can meet")
     s.add_argument("--json", help="write the full report here")
     s.add_argument("--quiet", action="store_true", help="don't print each task as it finishes")
     s.set_defaults(fn=cmd_sim)

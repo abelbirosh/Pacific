@@ -115,3 +115,38 @@ def test_delegators_build_chains(delegators):
         depths.append(max((c["depth"] for c in report["calls"]), default=0))
     assert max(depths) >= 2, depths
     assert_books_balance(admin)
+
+
+@pytest.fixture(scope="module")
+def shirkers(tmp_path_factory):
+    with boot(tmp_path_factory.mktemp("shirkers") / "home", seed=5, brain="sim:shirker") as env:
+        yield env
+
+
+def test_genesis_deals_a_chosen_persona_list(tmp_path):
+    from pacific.config import Config
+    from pacific.seed import genesis
+    config = Config(home=tmp_path / "home", exchange_port=1, services_port=2, agents_port=3)
+    brains = [a["brain"] for a in genesis(config, seed=2, brain="sim:shirker,careful")["secrets"]["agents"].values()]
+    assert brains == ["sim:shirker", "sim:careful"] * 2 + ["sim:shirker"]
+    with pytest.raises(ValueError, match="unknown personas"):
+        genesis(config, seed=2, brain="sim:shirker,lazybones", force=True)
+
+
+def test_shirkers_are_not_paid_for_work_they_skipped(shirkers):
+    """Every seller is a shirker. A buyer that hires one under contract gets its premium back
+    whenever the checks show the work wasn't done; the books balance either way."""
+    _, secrets, admin = shirkers
+    aid, _ = agent_with(secrets)
+    statuses = []
+    for seed in range(8):
+        spec = sim_task("database.json", aid, "careful", seed, budget=30)
+        spec["inputs"] = {**spec["inputs"], "delegate": True, "db": f"shirk{seed}"}
+        spec["checks"] = [{"type": "db_min_rows", "db": f"shirk{seed}", "table": "users", "min": 5}]
+        report = run_task(admin, spec)
+        statuses += [c["status"] for c in report["contracts"]]
+    assert_books_balance(admin)
+    contracts = admin.get("/v1/contracts", params={"limit": 1000}).json()["contracts"]
+    refunded = [c for c in contracts if c["status"] == "failed" and c["premium"]["wd"] > 0]
+    assert refunded, statuses  # a shirker claimed done, the checks disagreed, the premium went back
+    assert all(c["refunded"] == c["premium"] and c["released"]["wd"] == 0 for c in refunded)

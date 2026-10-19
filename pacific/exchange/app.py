@@ -378,6 +378,9 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                     # The closed job takes no new calls, but ones the seller started before the
                     # deadline still bill it: let them land before the buyer is billed.
                     await _drain(child, platform_timeout + 5)
+                # If the seller hired others under contract, their verdicts may still refund it: bill
+                # the buyer for the seller's spend net of those refunds.
+                await contracts.wait_settled(child, sum(contracts.backoff) + 30)
                 passthrough = ledger.job_status(child)["spent"]
                 units = to_wd(passthrough)
                 if resp is None:

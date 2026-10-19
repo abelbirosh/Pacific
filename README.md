@@ -88,6 +88,8 @@ A tier is paid one of two ways, and the seller chooses which:
    - The verdict is **passed** (premium released to the seller), **partial** (the milestones that passed are paid, the rest refunded), or **failed** (premium refunded).
    - Checks that still can't run after every retry make the contract **unverified**: refunded automatically, and recorded apart from failures, since an outage isn't the seller's doing.
 
+If a seller hires others under contract itself, its own buyer is billed only once those contracts settle, so the bill is for the seller's spend net of any premiums refunded to it. A refund that still comes after the bill goes to the seller's wallet without changing what was billed.
+
 The buyer keeps the results however the contract settles. The seller is never paid on its word alone, and the buyer can never keep a premium that the checks show was earned.
 
 **Track records** (`pacific/tracker.py`). Each tier's contracts give it a record: hires, passed / partial / failed / unverified / declined, and how much of the budget it used. They also give three smoothed rates, where `(k + 1) / (n + 2)` means a tier with no history scores 0.5:
@@ -138,6 +140,7 @@ The included **`ScriptedBrain`** is a deterministic stub that still makes budget
 | `delegator` | hires out work it could do itself, builds chains up to 4 deep, tips sellers |
 | `sloppy` | sends a malformed call first (typo'd endpoint, missing or mistyped arg), misjudges max cost, retries, sometimes quits |
 | `quitter` | abandons about a third of its tasks after 0-2 paid calls |
+| `shirker` | when hired, claims done having delivered nothing or only the cheap part that looks like the job (tables with no data, a report with the right headings and no scan). Opt-in only: `--brain sim:shirker,careful,...` |
 | `adversary` | probes the exchange: overspending, hijacking a parent job, self-dealing, admin endpoints, path traversal, malformed bodies, non-finite budgets, hiring its own buyers (cycles), acceptance checks no promise allows, hires over a tier's cost cap, rewriting another seller's promise |
 
 Each probe must be refused with the expected status and must not move the job's spend; one that isn't is listed under `artifacts.sim.violations` and in the task output. The task report's `artifacts.sim` also records the seed, decisions, quotes, fumbles, retries, hires and tips.
@@ -145,6 +148,7 @@ Each probe must be refused with the expected status and must not move the job's 
 ```bash
 uv run pacific init --brain sim            # deal the personas out across the agents
 uv run pacific init --brain sim:sloppy     # or give every agent one persona
+uv run pacific init --brain sim:shirker,careful,frugal   # or deal out just these, in order
 ```
 
 A task can override the agent's persona with `inputs._persona`. `PACIFIC_THINK_SCALE` scales each persona's pause before a decision (default 1; set 0 for fast tests).
@@ -192,10 +196,12 @@ Auth uses `Authorization: Bearer <key>`. Keys live in `.pacific/secrets.json`, w
 uv run pacific sim --boot                                   # fresh throwaway economy, 50 tasks, mild faults
 uv run pacific sim --boot --tasks 300 --concurrency 48 --rate 20 --faults chaos --json report.json
 uv run pacific sim --boot --personas sloppy,adversary       # every task as one of these personas
+uv run pacific sim --boot --brain sim:shirker,careful,delegator,frugal,spendthrift \
+    --tasks 300 --concurrency 16 --rate 5 --delegate-rate 0.5 --impossible-rate 0.15   # an escrow-focused run
 uv run pacific sim --tasks 100 --no-research                # against servers you started with `pacific serve`
 ```
 
-- **Workload** (`pacific/sim/workload.py`): random database, code_run, security_audit, research and multi-step tasks, each with checks whose right answer is computed up front (row sums, program output, planted vulnerabilities). Budgets are drawn tight, normal or generous relative to an estimate, and some tasks delegate.
+- **Workload** (`pacific/sim/workload.py`): random database, code_run, security_audit, research and multi-step tasks, each with checks whose right answer is computed up front (row sums, program output, planted vulnerabilities). Budgets are drawn tight, normal or generous relative to an estimate. A share of tasks delegate, set by `--delegate-rate` (default 0.1). With `--impossible-rate`, some database and code_run tasks get a check no honest work can meet: more rows than the seed has, a wrong total, or output that never appears. They're left out of the pass rate.
 - **Arrivals** are a Poisson process, assigned by each owner to a random agent, with at most `--concurrency` in flight. Everything is seeded.
 - **Faults** (`pacific/faults.py`) are injected into the platform services and agent host from `<home>/faults.json`, re-read on change. The rules cover latency, refusals, hangs past the exchange's provider timeout, and errors after the work was done. Profiles: `none`, `mild`, `harsh`, `chaos`. Change them on live servers with `pacific faults harsh`.
 - **Offline search**: `PACIFIC_SEARCH=offline` (or `pacific serve --offline-search`, the default for `--boot`) answers every upstream the search tiers scrape, in that API's own shape, from deterministic generated documents. The scrapers, ranking, readers and billing still run.
