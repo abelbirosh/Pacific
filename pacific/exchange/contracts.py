@@ -37,6 +37,7 @@ from .checks import CheckContext, run_checks
 log = logging.getLogger("pacific.contracts")
 
 DEFAULT_BACKOFF = (10.0, 60.0, 300.0)
+PRECHECK_BACKOFF = (0.2, 1.0)  # the buyer is waiting, so the must-fail run only retries briefly
 SETTLED = ("passed", "partial", "failed", "unverified", "declined")
 
 
@@ -71,12 +72,18 @@ class Contracts:
     # ---- opening ----------------------------------------------------------------------------
 
     async def precheck(self, workspace: str, checks: list[dict]) -> None:
-        """Every acceptance check must fail before the work starts (limits are exempt)."""
+        """Every acceptance check must fail before the work starts (limits are exempt). Checks that
+        can't run are retried briefly; if they still can't, the hire is refused with a 503."""
         to_run = [(i, c) for i, c in enumerate(checks) if c["type"] not in promises.LIMITS]
         if not to_run:
             return
         ctx = CheckContext(self.services_url, self.gateway_secret, workspace, "", {}, set())
-        results = await run_checks(ctx, [c for _, c in to_run])
+        for wait in (0.0,) + PRECHECK_BACKOFF:
+            if wait:
+                await asyncio.sleep(wait)
+            results = await run_checks(ctx, [c for _, c in to_run])
+            if not any(r.get("error") for r in results):
+                break
         if errored := [(i, r) for (i, _), r in zip(to_run, results) if r.get("error")]:
             raise ContractError(503, f"couldn't confirm the acceptance checks start unmet (check {errored[0][0]}: "
                                      f"{errored[0][1]['detail']}); try again")

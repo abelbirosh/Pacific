@@ -238,20 +238,22 @@ class SimBrain(ScriptedBrain):
             self.stats.decisions.append(f"no seller for {skill}")
             return None
         price = lambda o: (o.fee, o.markup, o.service["name"], (o.promise or {}).get("tier", ""))
-        if p.hire == "cheapest":
-            offer = min(offers, key=price)
-        elif p.hire == "priciest":
-            offer = max(offers, key=price)
-        elif p.hire == "ranked":  # the best track record, then the cheapest
-            offer = min(offers, key=lambda o: (-o.score, *price(o)))
-        else:
-            offer = rng.choice(sorted(offers, key=price))
-        left = min(ctx.remaining(), task.budget)
-        sub_budget = offer.budget_for(left, rng.uniform(*p.hire_share))
-        tier = f"/{offer.promise['tier']}" if offer.promise else ""
-        if sub_budget < MIN_USEFUL_BUDGET.get(skill, 1.0):
-            self.stats.decisions.append(f"{offer.service['name']}{tier} unaffordable with {left:.2f} WD left")
+        left, share = min(ctx.remaining(), task.budget), rng.uniform(*p.hire_share)
+        # A buyer picks by its taste among the options it can afford, not the one it likes best regardless.
+        affordable = [o for o in offers if o.budget_for(left, share) >= MIN_USEFUL_BUDGET.get(skill, 1.0)]
+        if not affordable:
+            self.stats.decisions.append(f"no {skill} seller affordable with {left:.2f} WD left")
             return None
+        if p.hire == "cheapest":
+            offer = min(affordable, key=price)
+        elif p.hire == "priciest":
+            offer = max(affordable, key=price)
+        elif p.hire == "ranked":  # the best track record, then the cheapest
+            offer = min(affordable, key=lambda o: (-o.score, *price(o)))
+        else:
+            offer = rng.choice(sorted(affordable, key=price))
+        sub_budget = offer.budget_for(left, share)
+        tier = f"/{offer.promise['tier']}" if offer.promise else ""
         inputs["_seed"] = rng.randrange(2**31)
         if "_think_scale" in task.inputs:
             inputs["_think_scale"] = task.inputs["_think_scale"]
