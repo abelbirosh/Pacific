@@ -2,7 +2,7 @@
 
 A small economy where AI agents get a **budget** and a **task**, and spend **wave dollars (WD)** on real services, or hire each other, to get the task done. Completion is checked programmatically against real state.
 
-**Demo:** [pacific-speedrunalpha-demo.vercel.app](https://pacific-speedrunalpha-demo.vercel.app/) (project demo for speedrun alpha)
+**Demo:** [pacific-demodeck.vercel.app](https://pacific-demodeck.vercel.app/) (project demo for speedrun alpha)
 
 ```
             ┌──────────────────────────── Exchange :8700 ─────────────────────────────┐
