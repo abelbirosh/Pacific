@@ -15,7 +15,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
-from ..promises import validate_checks
+from ..promises import hire_errors, validate_checks
 from .client import MarketError
 from .tools import Toolbox
 
@@ -59,7 +59,7 @@ class Task:
 
 @dataclass
 class BrainResult:
-    status: str  # completed | failed
+    status: str  # completed | failed | declined (turned down before spending anything)
     output: str
     artifacts: dict = field(default_factory=dict)
 
@@ -94,6 +94,8 @@ class ScriptedBrain:
         skill = task.skill or infer_skill(task.description)
         if skill is None:
             return BrainResult("failed", f"Can't tell what kind of task this is: {task.description!r}")
+        if reason := assess(task, skill):
+            return BrainResult("declined", f"Declined before starting: {reason}")
         if skill not in ctx.skills or task.inputs.get("delegate"):
             hired = self._try_delegate(task, skill, ctx)
             if hired is not None:
@@ -128,41 +130,114 @@ class ScriptedBrain:
 
         Under a promise tier, the task's own checks that the tier allows go along as acceptance checks."""
         chain = set(task.inputs.get("_chain", [])) | {ctx.agent_id}
-        offers = []
-        for s in ctx.tools.call("list_services", kind="agent", skill=skill):
-            if s["provider_id"] in chain:
-                continue
-            ep = s["endpoints"][0]
-            for p in ep.get("promises") or [None]:
-                fee, markup = (p["fee"], p["markup_pct"]) if p else (ep["plan"]["per_call"], ep["plan"]["markup_pct"])
-                offers.append((fee, markup, s, p))
+        inputs = {k: v for k, v in task.inputs.items() if k not in ("delegate", "_chain")}
+        offers = [o for s in ctx.tools.call("list_services", kind="agent", skill=skill)
+                  if s["provider_id"] not in chain for o in hire_options(s, task.checks, inputs)]
         if not offers:
             return None
-        fee, markup, offer, promise = min(offers, key=lambda o: (o[0], o[1]))
-        left = min(ctx.remaining(), task.budget)
-        sub_budget = round((left - fee) / (1 + markup / 100) * 0.95, 4)  # keep a little slack
-        if promise:
-            sub_budget = min(sub_budget, promise["cost_cap"])
+        offer = min(offers, key=lambda o: (o.fee, o.markup))
+        sub_budget = offer.budget_for(min(ctx.remaining(), task.budget), 0.95)  # keep a little slack
         if sub_budget < MIN_USEFUL_BUDGET.get(skill, 1.0):
             return None
-        inputs = {k: v for k, v in task.inputs.items() if k not in ("delegate", "_chain")}
-        terms = {}
-        if promise:
-            checks = [c for c in task.checks if not validate_checks(promise["checks"], [c], inputs)]
-            terms = {"promise": promise["tier"], "promise_version": promise["version"], "checks": checks}
         try:
-            receipt = ctx.tools.call("hire_agent", service=offer["name"], description=task.description,
-                                     budget=sub_budget, inputs=inputs, **terms)
+            receipt = hire(ctx, offer, task.description, sub_budget, inputs)
         except MarketError:
             return None
         result = receipt.result or {}
         status = "completed" if receipt.raw["status"] == "ok" else "failed"
-        tier = f", {promise['tier']} tier" if promise else ""
+        tier = f", {offer.promise['tier']} tier" if offer.promise else ""
         return BrainResult(
             status,
-            f"Hired {offer['provider']} ({offer['name']}{tier}) for {receipt.cost:.4f} WD.\n\n"
+            f"Hired {offer.service['provider']} ({offer.service['name']}{tier}) for {receipt.cost:.4f} WD.\n\n"
             f"{result.get('output', receipt.error)}",
         )
+
+
+@dataclass
+class HireOption:
+    """One way to hire a seller: a promise tier with the acceptance checks it allows (or no tier)."""
+    service: dict
+    promise: dict | None
+    checks: list[dict]
+    fee: float
+    markup: float
+
+    @property
+    def score(self) -> float:
+        return (self.promise or {}).get("record", {}).get("score", 0.5)
+
+    def budget_for(self, left: float, share: float) -> float:
+        budget = round((left - self.fee) / (1 + self.markup / 100) * share, 4)
+        return min(budget, self.promise["cost_cap"]) if self.promise else budget
+
+
+def hire_options(service: dict, checks: list[dict], inputs: dict) -> list[HireOption]:
+    """Every tier a buyer could hire this seller under, carrying along the task checks each one allows.
+    A progress tier needs a check for each milestone, so it's only an option when the checks cover them."""
+    ep = service["endpoints"][0]
+    if not ep.get("promises"):
+        return [HireOption(service, None, [], ep["plan"]["per_call"], ep["plan"]["markup_pct"])]
+    out = []
+    for p in ep["promises"]:
+        allowed = [c for c in checks if not validate_checks(p["checks"], [c], inputs)]
+        if not hire_errors(p, allowed, inputs):
+            out.append(HireOption(service, p, allowed, p["fee"], p["markup_pct"]))
+    return out
+
+
+def hire(ctx: AgentContext, offer: HireOption, description: str, budget: float, inputs: dict):
+    """Hire under the option's tier. Acceptance checks the exchange finds already passing (so they
+    can't show the seller delivered) are dropped and the hire is tried once more without them."""
+    terms = {}
+    if offer.promise:
+        terms = {"promise": offer.promise["tier"], "promise_version": offer.promise["version"], "checks": offer.checks}
+    try:
+        return ctx.tools.call("hire_agent", service=offer.service["name"], description=description, budget=budget,
+                              inputs=inputs, **terms)
+    except MarketError as e:
+        stale = already_passing(e)
+        if not stale:
+            raise
+        terms["checks"] = [c for i, c in enumerate(offer.checks) if i not in stale]
+        if offer.promise and hire_errors(offer.promise, terms["checks"], inputs):
+            raise
+        return ctx.tools.call("hire_agent", service=offer.service["name"], description=description, budget=budget,
+                              inputs=inputs, **terms)
+
+
+def already_passing(e: MarketError) -> set[int]:
+    if e.status != 409 or not isinstance(e.detail, dict):
+        return set()
+    out = set()
+    for err in e.detail.get("errors", []):
+        head = str(err).split(":", 1)[0]
+        if head.startswith("check ") and head[6:].isdigit():
+            out.add(int(head[6:]))
+    return out
+
+
+def assess(task: Task, skill: str) -> str | None:
+    """Why this task can't be done as given, before anything is spent on it (None if it can).
+    A hired agent that declines this way costs its buyer nothing."""
+    inputs = task.inputs
+    if inputs.get("steps"):
+        return None
+    if skill == "database":
+        if not inputs.get("schema_sql"):
+            return "database tasks need inputs.schema_sql"
+        seed = inputs.get("seed") or {}
+        if "insert" in inputs["schema_sql"].lower():
+            return None  # rows also come from the schema itself; can't count them up front
+        for c in task.checks:
+            if c.get("type") == "db_min_rows" and c.get("db") == inputs.get("db", "app"):
+                have = len(seed.get(c.get("table"), []) or [])
+                if isinstance(c.get("min"), int) and c["min"] > have:
+                    return f"{c['table']} must reach {c['min']} rows but the seed only has {have}"
+    elif skill == "code_run" and not inputs.get("code"):
+        return "code_run tasks need inputs.code"
+    elif skill == "security_audit" and not (inputs.get("files") or inputs.get("storage_keys") or inputs.get("requirements")):
+        return "security audits need inputs.files, inputs.storage_keys or inputs.requirements"
+    return None
 
 
 def infer_skill(description: str) -> str | None:

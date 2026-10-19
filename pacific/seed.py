@@ -15,7 +15,7 @@ from .ids import new_api_key
 from .ledger import Ledger
 from .money import to_micro
 from .names import agent_name, person_name
-from .promises import SKILL_PROMISES
+from .promises import SKILL_MILESTONES, SKILL_PROMISES
 from .registry import put_promise, register_agent_offering, register_service
 from .services import app as services_app
 from .services.catalog import PLATFORM_SERVICES, request_schemas
@@ -33,6 +33,9 @@ def genesis(config: Config, seed: int | None = None, supply: float = 1_000_000, 
         shutil.rmtree(config.home)
     config.home.mkdir(parents=True)
     rng = random.Random(seed)
+    # Promise terms draw from their own stream, so a seed gives the same people, agents and prices
+    # whatever the promises add.
+    terms_rng = random.Random(None if seed is None else f"promises-{seed}")
 
     db = Database(config.ledger_path)
     ledger = Ledger(db)
@@ -47,6 +50,7 @@ def genesis(config: Config, seed: int | None = None, supply: float = 1_000_000, 
         ledger.mint(conn, treasury, to_micro(supply), "genesis supply")
 
         platform, _ = ledger.create_account(conn, "platform", "Pacific Platform", with_key=False)
+        ledger.escrow_account(conn)
         for name, spec in PLATFORM_SERVICES.items():
             acct, _ = ledger.create_account(conn, "service", name, owner_id=platform, with_key=False)
             endpoints = {
@@ -86,10 +90,14 @@ def genesis(config: Config, seed: int | None = None, supply: float = 1_000_000, 
                 offerings.append(offering)
                 # standard is the listed price; thorough lets the buyer demand more, for a bigger premium
                 premiums = {"standard": (fee, markup),
-                            "thorough": (round(fee * rng.uniform(1.6, 2.4), 2), markup + rng.choice([5, 10, 15]))}
+                            "thorough": (round(fee * terms_rng.uniform(1.6, 2.4), 2), markup + terms_rng.choice([5, 10, 15]))}
+                # each seller decides whether its thorough tier is paid on completion or by milestone
+                progress = skill in SKILL_MILESTONES and terms_rng.random() < 0.5
                 for tier, (deliverables, checks, cost_cap, turnaround_s) in SKILL_PROMISES[skill].items():
+                    by_milestone = tier == "thorough" and progress
                     put_promise(conn, offering, "delegate", tier, *premiums[tier], cost_cap, turnaround_s,
-                                deliverables, checks)
+                                deliverables, checks, "progress" if by_milestone else "completion",
+                                SKILL_MILESTONES[skill] if by_milestone else None)
             secrets["agents"][agent] = {"name": aname, "key": akey, "owner": person, "skills": skills,
                                         "brain": agent_brain, "offerings": offerings}
 

@@ -100,7 +100,7 @@ def cmd_status(args, config: Config):
     accts = api("GET", "/v1/admin/accounts")["accounts"]
     print(f"Global supply: {wd(audit['total_supply'])} WD   balances sum: {wd(audit['sum_of_balances'])}   "
           f"held: {wd(audit['active_holds'])}   invariant {'OK' if audit['ok'] else 'BROKEN'}\n")
-    for kind in ("agent", "person", "service", "platform", "treasury"):
+    for kind in ("agent", "person", "service", "escrow", "platform", "treasury"):
         rows = [{"name": a["name"], "owner": a["owner"] or "", "balance": wd(a["balance"]), "held": wd(a["held"]),
                  "skills": ", ".join(a["profile"].get("skills", []))} for a in accts if a["kind"] == kind]
         if rows:
@@ -149,6 +149,7 @@ def cmd_sim(args, config: Config):
 
         if not args.online:
             os.environ["PACIFIC_SEARCH"] = "offline"
+        os.environ.setdefault("PACIFIC_VERIFY_BACKOFF", "0.5,2,5")  # retry unreachable checks quickly in a sim
         os.environ.setdefault("PACIFIC_PLATFORM_TIMEOUT", "10")
         econ = Config(home=Path(tempfile.mkdtemp(prefix="pacific-sim-")) / "home", exchange_port=free_port(),
                       services_port=free_port(), agents_port=free_port())
@@ -177,6 +178,27 @@ def cmd_services(args, config: Config):
                 print(f"      promise {p['terms']}\n        delivers: {'; '.join(d['name'] for d in p['deliverables'])}"
                       f"   judged by: {checks}")
         print()
+
+
+def cmd_rankings(args, config: Config):
+    rows = Api(config)("GET", "/v1/rankings", params={"skill": args.skill} if args.skill else None)["rankings"]
+    print(table([{**r, "tier": f"{r['tier']} ({r['payment']})", "score": f"{r['score']:.3f}",
+                  "success": f"{r['success']:.2f}", "accuracy": f"{r['accuracy']:.2f}", "on time": f"{r['on_time']:.2f}",
+                  "record": f"{r['passed']}/{r['partial']}/{r['failed']}"} for r in rows],
+                ["rank", "service", "tier", "provider", "score", "success", "accuracy", "on time", "hires", "record",
+                 "unverified", "declined"]))
+    print("\nrecord = passed/partial/failed. Scores are smoothed, so a tier with no history scores 0.5.")
+
+
+def cmd_contracts(args, config: Config):
+    data = Api(config)("GET", "/v1/contracts", params={"limit": args.limit, **({"status": args.status} if args.status else {})})
+    s = data["summary"]
+    print(f"{s['contracts']} contracts {s['statuses']}\npremiums {wd(s['premium_wd'])} WD: released "
+          f"{wd(s['released_wd'])}, refunded {wd(s['refunded_wd'])}, in escrow {wd(s['in_escrow_wd'])}\n")
+    print(table([{"id": c["id"], "seller": c["service"], "tier": c["tier"], "status": c["status"],
+                  "premium": wd(c["premium"]["wd"]), "released": wd(c["released"]["wd"]),
+                  "refunded": wd(c["refunded"]["wd"]), "runs": c["attempts"]} for c in data["contracts"]],
+                ["id", "seller", "tier", "status", "premium", "released", "refunded", "runs"]))
 
 
 def cmd_ledger(args, config: Config):
@@ -221,6 +243,12 @@ def print_report(r: dict):
                  "status": c["status"], "units": c["units"], "cost": wd(c["cost_wd"]),
                  "ms": c["latency_ms"]} for c in r["calls"]]
         print(table(rows, ["by", "service", "status", "units", "cost", "ms"]))
+    if r.get("contracts"):
+        print("\nContracts:")
+        rows = [{"seller": c["service"], "tier": f"{c['tier']} v{c['version']}", "payment": c["payment"],
+                 "status": c["status"], "claim": c["claim"] or "", "premium": wd(c["premium"]["wd"]),
+                 "released": wd(c["released"]["wd"]), "refunded": wd(c["refunded"]["wd"])} for c in r["contracts"]]
+        print(table(rows, ["seller", "tier", "payment", "status", "claim", "premium", "released", "refunded"]))
     if r["checks"]:
         print("\nChecks:")
         for c in r["checks"]:
@@ -310,6 +338,15 @@ def main(argv: list[str] | None = None):
     s = sub.add_parser("services", help="the marketplace catalog with price plans")
     s.add_argument("--kind", choices=["platform", "agent"])
     s.set_defaults(fn=cmd_services)
+
+    s = sub.add_parser("rankings", help="promise tiers ranked by their contracts' track record")
+    s.add_argument("--skill")
+    s.set_defaults(fn=cmd_rankings)
+
+    s = sub.add_parser("contracts", help="recent contracts and where their premiums went")
+    s.add_argument("--status", help="working | verifying | passed | partial | failed | unverified | declined")
+    s.add_argument("--limit", type=int, default=30)
+    s.set_defaults(fn=cmd_contracts)
 
     s = sub.add_parser("ledger", help="recent transactions")
     s.add_argument("--limit", type=int, default=30)

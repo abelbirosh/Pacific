@@ -10,7 +10,9 @@ Every purchase goes through `POST /v1/call/{service}/{endpoint}`:
 A hire can name one of the endpoint's promise tiers (`promise`), optionally pinned to the version
 the buyer was quoted (`promise_version`), with acceptance `checks` the promise's templates allow.
 The hire is then priced by that version and the version is recorded on the call, so a seller
-changing its promise later never changes a hire already made.
+changing its promise later never changes a hire already made. When buyer and seller have different
+owners the hire is also a contract (see contracts.py): the premium waits in escrow until the
+acceptance checks are verified.
 
 Delegation opens a child job for the hired agent, with the buyer's stated budget. The hired
 agent pays for its own platform calls under that job, and the buyer is then charged the
@@ -19,6 +21,7 @@ land in the root job's workspace, so checks can find them.
 """
 
 
+import asyncio
 import json
 import math
 import os
@@ -39,6 +42,8 @@ from ..ledger import Ledger, LedgerError
 from ..money import fmt, to_micro, to_wd
 from ..registry import Registry, put_promise, register_agent_offering, retire_promise
 from .checks import CheckContext, run_checks
+from .contracts import ContractError, Contracts
+from .. import tracker
 
 PLATFORM_TIMEOUT = 120
 DELEGATION_TIMEOUT = 900
@@ -53,10 +58,13 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
     # No connection cap: a delegated call holds its connection while the hired agent makes calls
     # of its own, so a capped pool can fill with callers waiting on callees that can't connect.
     http = httpx.AsyncClient(limits=httpx.Limits(max_connections=None, max_keepalive_connections=200))
+    contracts = Contracts(db, ledger, registry, config.services_url, secrets["gateway_secret"])
 
     @asynccontextmanager
     async def lifespan(_):
+        sweeper = asyncio.create_task(contracts.sweep_forever())
         yield
+        sweeper.cancel()
         await http.aclose()
 
     app = FastAPI(title="Pacific exchange", lifespan=lifespan)
@@ -64,6 +72,10 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
     @app.exception_handler(LedgerError)
     async def ledger_error(_, exc: LedgerError):
         return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
+
+    @app.exception_handler(ContractError)
+    async def contract_error(_, exc: ContractError):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
     @app.exception_handler(promises.PromiseError)
     async def promise_error(_, exc: promises.PromiseError):
@@ -156,6 +168,8 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         turnaround_s: int
         deliverables: list
         checks: list
+        payment: str = "completion"
+        milestones: list = Field(default_factory=list)
 
     def _own_endpoint(name: str, endpoint: str, acct) -> None:
         svc = registry.service(name)
@@ -176,7 +190,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         _own_endpoint(name, req.endpoint, acct)
         with db.tx() as conn:
             promise_id = put_promise(conn, name, req.endpoint, tier, req.fee, req.markup_pct, req.cost_cap,
-                                     req.turnaround_s, req.deliverables, req.checks)
+                                     req.turnaround_s, req.deliverables, req.checks, req.payment, req.milestones)
         return registry.public(registry.promise_by_id(promise_id))
 
     @app.delete("/v1/services/{name}/promises/{tier}")
@@ -212,7 +226,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                                      f"{fmt(promise['cost_cap'])}")
         checks = [] if checks is None else checks
         inputs = body.get("inputs") if isinstance(body.get("inputs"), dict) else {}
-        if errors := promises.validate_checks(promise["checks"], checks, inputs):
+        if errors := promises.hire_errors(promise, checks, inputs):
             raise HTTPException(400, {"message": f"checks the {tier} promise doesn't allow", "errors": errors})
         return promises.plan(promise), promise, checks
 
@@ -301,6 +315,11 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         if x_pacific_max_cost is not None and hold_amount > to_micro(x_pacific_max_cost):
             raise HTTPException(402, f"worst-case cost {fmt(hold_amount)} exceeds your max {x_pacific_max_cost} WD")
 
+        workspace = job["root_job_id"] if job else acct["id"]
+        under_contract = promise is not None and contracts.applies(acct, ledger.account(svc["provider_id"]))
+        if under_contract:
+            await contracts.precheck(workspace, acceptance)
+
         call_id = new_id("call")
         with db.tx() as conn:
             hold_id = ledger.place_hold(conn, acct["id"], hold_amount, x_pacific_job)
@@ -311,10 +330,9 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                  promise["id"] if promise else None, None if acceptance is None else json.dumps(acceptance)),
             )
 
-        workspace = job["root_job_id"] if job else acct["id"]
         t0 = time.monotonic()
         cost, units, status, error, payload, http_status = 0, 0.0, "failed", None, None, 502
-        child = None
+        child, contract, claim, premium = None, None, "error", 0
         try:
             if svc["kind"] == "platform":
                 resp = await http.post(
@@ -337,25 +355,50 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                 with db.tx() as conn:
                     child = ledger.open_job(conn, svc["provider_id"], to_micro(body["budget"]), parent_job_id=x_pacific_job)
                     conn.execute("UPDATE calls SET child_job_id = ? WHERE id = ?", (child, call_id))
-                resp = await http.post(
-                    svc["base_url"] + ep["path"], timeout=delegation_timeout,
-                    json={"task": body, "job_id": child, "buyer_id": acct["id"], "skill": json.loads(svc["meta"]).get("skill")},
-                    headers={"X-Pacific-Gateway-Secret": secrets["gateway_secret"]},
-                )
+                    if under_contract:
+                        contract = contracts.open(conn, call_id, promise, acct["id"], svc["provider_id"], x_pacific_job,
+                                                  child, acceptance, to_micro(body["budget"]))
+                # Under a contract the seller has until the promise's turnaround; then whatever exists is verified.
+                wait = delegation_timeout if contract is None else \
+                    max(0.001, min(delegation_timeout, contract["deadline_at"] - time.time()))
+                try:
+                    resp = await asyncio.wait_for(http.post(
+                        svc["base_url"] + ep["path"], timeout=delegation_timeout,
+                        json={"task": body, "job_id": child, "buyer_id": acct["id"],
+                              "skill": json.loads(svc["meta"]).get("skill")},
+                        headers={"X-Pacific-Gateway-Secret": secrets["gateway_secret"]},
+                    ), timeout=wait)
+                except asyncio.TimeoutError:
+                    if contract is None:
+                        raise
+                    resp = None
                 with db.tx() as conn:
                     conn.execute("UPDATE jobs SET status = 'closed' WHERE id = ?", (child,))
+                if resp is None:
+                    # The closed job takes no new calls, but ones the seller started before the
+                    # deadline still bill it: let them land before the buyer is billed.
+                    await _drain(child, platform_timeout + 5)
                 passthrough = ledger.job_status(child)["spent"]
                 units = to_wd(passthrough)
-                http_status = resp.status_code
-                data = resp.json()
-                if resp.is_success and data.get("status") == "completed":
-                    cost, status, payload = plan.cost(body, passthrough=passthrough), "ok", data
+                if resp is None:
+                    claim, http_status = "timeout", 200
+                    data = {"status": "timeout", "output": "the promise's turnaround passed; verifying what exists"}
                 else:
-                    # The hired agent failed: no fee or markup, but the buyer still covers what
-                    # was genuinely spent on its behalf.
-                    cost, payload = passthrough, data
-                    error = data.get("detail") or data.get("output") or "delegated task failed"
+                    http_status, data = resp.status_code, resp.json()
+                    reported = data.get("status") if resp.is_success else None
+                    claim = reported if reported in ("completed", "failed", "declined") else "error"
                     http_status = 200 if resp.is_success else http_status
+                payload = data
+                if claim == "completed":
+                    cost, status = plan.cost(body, passthrough=passthrough), "ok"
+                else:
+                    # The hired agent didn't finish: no fee or markup, but the buyer still covers what
+                    # was genuinely spent on its behalf.
+                    cost = passthrough
+                    error = data.get("detail") or data.get("output") or "delegated task failed"
+                if contract is not None and claim in ("completed", "timeout"):
+                    # Resources are paid now; the premium goes to escrow until the checks are verified.
+                    premium, cost = plan.cost(body, passthrough=passthrough) - passthrough, passthrough
         except Exception as e:  # whatever went wrong, the hold below must still be settled
             error = f"provider unreachable or bad response: {type(e).__name__}: {e}"
             if child:  # whatever the hired agent already spent is still owed at cost
@@ -364,13 +407,21 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                 cost = ledger.job_status(child)["spent"]
         latency = int((time.monotonic() - t0) * 1000)
 
+        contract_status = None
         with db.tx() as conn:
-            charged = ledger.settle_hold(conn, hold_id, svc["provider_id"], cost,
-                                         f"{service}/{endpoint}", call_id)
+            parts = [(svc["provider_id"], cost, "charge")]
+            if premium:
+                parts.append((ledger.escrow_account(conn), premium, "escrow"))
+            charged = ledger.settle_hold_split(conn, hold_id, parts, f"{service}/{endpoint}", call_id)
             conn.execute(
                 "UPDATE calls SET status=?, cost=?, units=?, error=?, latency_ms=? WHERE id=?",
                 (status, charged, units, None if error is None else str(error)[:2000], latency, call_id),
             )
+            if contract is not None:
+                escrowed = max(0, charged - min(cost, hold_amount))
+                contract_status = contracts.returned(conn, contract["id"], claim, cost, escrowed)
+        if contract_status == "verifying":
+            contracts.start_verifying(contract["id"])
         receipt = {
             "call_id": call_id, "service": service, "endpoint": endpoint, "status": status,
             "cost": money(charged), "units": units, "latency_ms": latency,
@@ -378,15 +429,55 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         }
         if promise:
             receipt["promise"] = {"id": promise["id"], "tier": promise["tier"], "version": promise["version"]}
+        if contract is not None:
+            receipt["contract"] = {"id": contract["id"], "status": contract_status, "claim": claim,
+                                   "premium_in_escrow": money(premium if contract_status == "verifying" else 0)}
         if status != "ok" and svc["kind"] == "platform":
             return JSONResponse({**receipt, "detail": error}, status_code=http_status if http_status >= 400 else 502)
         return {**receipt, "result": payload, "error": error}
+
+    async def _drain(job_id: str, limit_s: float) -> None:
+        """Wait (up to limit_s) until no hold on this job is still active."""
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < limit_s:
+            if db.one("SELECT 1 FROM holds WHERE job_id = ? AND status = 'active' LIMIT 1", (job_id,)) is None:
+                return
+            await asyncio.sleep(0.05)
 
     def _job_brief(job_id: str | None) -> dict | None:
         if not job_id:
             return None
         j = ledger.job_status(job_id)
         return {"id": job_id, "budget": to_wd(j["budget"]), "spent": to_wd(j["spent"]), "remaining": to_wd(j["remaining"])}
+
+    # ---- contracts and rankings -------------------------------------------------------------
+
+    def contract_view(row) -> dict:
+        c = contracts.describe(row)
+        return {**c, **{k: money(c[k]) for k in ("budget", "spent", "premium", "released", "refunded")}}
+
+    @app.get("/v1/contracts/{contract_id}")
+    def get_contract(contract_id: str, who=Depends(admin_or_account)):
+        row = db.one("SELECT * FROM contracts WHERE id = ?", (contract_id,))
+        if row is None:
+            raise HTTPException(404, "no such contract")
+        if who is not None:
+            parties = {row["buyer_id"], row["seller_id"]}
+            owners = {ledger.account(p)["owner_id"] for p in parties}
+            if who["id"] not in parties | owners:
+                raise HTTPException(403, "not a party to this contract")
+        return contract_view(row)
+
+    @app.get("/v1/contracts", dependencies=[Depends(admin)])
+    def list_contracts(status: str | None = None, limit: int = 50):
+        rows = db.all("SELECT * FROM contracts WHERE (? IS NULL OR status = ?) ORDER BY created_at DESC LIMIT ?",
+                      (status, status, limit))
+        return {"contracts": [contract_view(r) for r in rows], "summary": tracker.summary(db)}
+
+    @app.get("/v1/rankings")
+    def rankings(skill: str | None = None):
+        """Every promise tier ranked by its track record."""
+        return {"rankings": tracker.rankings(db, skill)}
 
     # ---- tasks ------------------------------------------------------------------------------
 
@@ -472,6 +563,9 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
             for c in db.all(
                 "SELECT * FROM calls WHERE job_id IN (%s) ORDER BY started_at" % ",".join("?" * len(jobs)), tuple(jobs))
         ]
+        tree_contracts = [contract_view(r) for r in db.all(
+            "SELECT * FROM contracts WHERE child_job_id IN (%s) ORDER BY created_at" % ",".join("?" * len(jobs)),
+            tuple(jobs))]
         by_service: dict[str, float] = {}
         for c in calls:
             if c["depth"] == 0:
@@ -482,6 +576,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
             "remaining": money(job["budget"] - job["spent"]), "workspace": job["root_job_id"],
             "spend_by_service": by_service, "checks": json.loads(task["checks"] or "[]"),
             "output": task["output"], "trace": json.loads(task["trace"] or "[]"), "calls": calls,
+            "contracts": tree_contracts,
             "artifacts": json.loads(task["artifacts"] or "{}"),
             "spec": json.loads(task["spec"]), "created_at": task["created_at"], "finished_at": task["finished_at"],
         }

@@ -23,7 +23,7 @@ class Persona:
     results: tuple[int, int] = (3, 6)     # research result count range
     timeout_s: tuple[int, int] = (3, 12)  # sandbox timeout range when the task doesn't fix one
     delegate: float = 0.0                 # hire out a skill it could do itself
-    hire: str = "cheapest"                # pick sellers by: cheapest | random | priciest
+    hire: str = "cheapest"                # pick seller and tier by: cheapest | random | priciest | ranked (track record)
     hire_share: tuple[float, float] = (0.6, 0.95)  # share of what's left handed to a hired agent
     max_depth: int = 2                    # won't hire when already this deep in a delegation chain
     retries: int = 1                      # retries on transient failures (5xx, 429, transport)
@@ -35,9 +35,9 @@ class Persona:
 
 
 PERSONAS: dict[str, Persona] = {p.name: p for p in (
-    Persona("careful", "Shops around, quotes everything, guards spend with a max cost.",
+    Persona("careful", "Shops around, quotes everything, hires by track record, guards spend with a max cost.",
             browse=0.9, quote_first=0.9, max_cost_guard=0.6, guard_slack=(1.02, 1.2), tier="best",
-            delegate=0.05, retries=2, think_s=0.8),
+            delegate=0.05, hire="ranked", retries=2, think_s=0.8),
     Persona("frugal", "Always the cheapest tier and seller, small budgets for hires.",
             browse=0.5, quote_first=0.6, tier="cheapest", results=(2, 4), timeout_s=(2, 5),
             delegate=0.1, hire="cheapest", hire_share=(0.4, 0.7), think_s=0.5),

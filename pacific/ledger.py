@@ -3,6 +3,11 @@
 Invariant: the sum of every account balance equals the global supply (`meta.total_supply`).
 Money only enters through `mint` (which raises the supply) and otherwise only moves between
 accounts. Holds reserve funds without moving them, so a caller can never commit more than it has.
+
+Escrow is a real account (kind `escrow`). A hire under a promise moves its premium out of the
+buyer's hold into escrow, where it waits for the contract's verdict and then moves exactly once
+more: released to the seller, refunded to the buyer, or split between them. A refund also gives
+the buyer's job back that much of its budget.
 """
 
 from __future__ import annotations
@@ -161,19 +166,54 @@ class Ledger:
         call_id: str | None,
     ) -> int:
         """Release a hold and charge up to its amount to `to_id`. Returns what was charged."""
+        return self.settle_hold_split(conn, hold_id, [(to_id, amount, "charge")], memo, call_id)
+
+    def settle_hold_split(
+        self,
+        conn: sqlite3.Connection,
+        hold_id: str,
+        parts: list[tuple[str | None, int, str]],
+        memo: str,
+        call_id: str | None,
+    ) -> int:
+        """Release a hold and pay it out in parts, (to_id, amount, kind) in order, each capped by what
+        is left of the hold. Kind is `charge` or `escrow`; both count as the job's spend. Returns the total."""
         hold = conn.execute("SELECT * FROM holds WHERE id = ? AND status = 'active'", (hold_id,)).fetchone()
         if hold is None:
             raise LedgerError(f"hold {hold_id} is not active")
         conn.execute("UPDATE holds SET status = 'settled' WHERE id = ?", (hold_id,))
-        charged = max(0, min(amount, hold["amount"]))
-        if charged and to_id:
-            # The hold already guaranteed these funds, so skip the available-balance check.
-            self.transfer(
-                conn, hold["account_id"], to_id, charged, memo, "charge", call_id, hold["job_id"], ignore_holds=True
-            )
-            if hold["job_id"]:
-                conn.execute("UPDATE jobs SET spent = spent + ? WHERE id = ?", (charged, hold["job_id"]))
-        return charged
+        left, total = hold["amount"], 0
+        for to_id, amount, kind in parts:
+            paid = max(0, min(amount, left))
+            if paid and to_id:
+                # The hold already guaranteed these funds, so skip the available-balance check.
+                self.transfer(conn, hold["account_id"], to_id, paid, memo, kind, call_id, hold["job_id"],
+                              ignore_holds=True)
+                left, total = left - paid, total + paid
+        if total and hold["job_id"]:
+            conn.execute("UPDATE jobs SET spent = spent + ? WHERE id = ?", (total, hold["job_id"]))
+        return total
+
+    # ---- escrow -----------------------------------------------------------------------------
+
+    def escrow_account(self, conn: sqlite3.Connection) -> str:
+        row = conn.execute("SELECT id FROM accounts WHERE kind = 'escrow'").fetchone()
+        if row:
+            return row[0]
+        platform = conn.execute("SELECT id FROM accounts WHERE kind = 'platform'").fetchone()
+        account_id, _ = self.create_account(conn, "escrow", "Pacific Escrow", owner_id=platform[0] if platform else None,
+                                            with_key=False)
+        return account_id
+
+    def escrow_payout(self, conn: sqlite3.Connection, escrow_id: str, seller_id: str, buyer_id: str,
+                      buyer_job_id: str | None, release: int, refund: int, memo: str, call_id: str) -> None:
+        """Move a contract's premium out of escrow: `release` to the seller, `refund` to the buyer."""
+        if release:
+            self.transfer(conn, escrow_id, seller_id, release, memo, "escrow_release", call_id, buyer_job_id)
+        if refund:
+            self.transfer(conn, escrow_id, buyer_id, refund, memo, "escrow_refund", call_id, buyer_job_id)
+            if buyer_job_id:
+                conn.execute("UPDATE jobs SET spent = spent - ? WHERE id = ?", (refund, buyer_job_id))
 
     def open_job(
         self,

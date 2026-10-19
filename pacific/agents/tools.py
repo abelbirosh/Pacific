@@ -103,6 +103,11 @@ class Toolbox:
             lambda kind=None, skill=None: c.services(kind, skill),
         ))
         self.register(Tool(
+            "rankings", "Every seller's promise tiers ranked by track record: success, check accuracy, "
+            "on-time delivery (free).", obj({"skill": {"type": "string"}}),
+            lambda skill=None: c.rankings(skill),
+        ))
+        self.register(Tool(
             "quote", "Worst-case cost of a call before making it (free).",
             obj({"service": {"type": "string"}, "endpoint": {"type": "string"}, "args": {"type": "object"}},
                 ["service", "endpoint", "args"]),

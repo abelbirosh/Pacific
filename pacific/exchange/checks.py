@@ -2,6 +2,10 @@
 
 A task lists checks like {"type": "db_min_rows", "db": "app", "table": "users", "min": 5}.
 State checks read the task's workspace directly from the platform services (free of charge).
+
+A check that can't reach the state it reads (a service is down, refuses, or times out) has
+*errored*, which is not the same as failed: its result says `"error": true`, and a contract
+retries it rather than counting it against the seller.
 """
 
 from __future__ import annotations
@@ -14,6 +18,10 @@ import httpx
 from ..money import fmt, to_micro
 
 
+class CheckUnavailable(Exception):
+    """The state a check reads couldn't be reached, so the check says nothing either way."""
+
+
 class CheckContext:
     def __init__(self, services_url: str, gateway_secret: str, workspace: str, output: str,
                  job: dict, services_used: set[str]):
@@ -24,9 +32,15 @@ class CheckContext:
         self.services_used = services_used
 
     async def service(self, path: str, body: dict) -> tuple[int, dict]:
-        async with httpx.AsyncClient(timeout=60) as http:
-            r = await http.post(self.services_url + path, json=body, headers=self.headers)
-        return r.status_code, r.json()
+        try:
+            async with httpx.AsyncClient(timeout=60) as http:
+                r = await http.post(self.services_url + path, json=body, headers=self.headers)
+            data = r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            raise CheckUnavailable(f"{path} unreachable: {type(e).__name__}: {e}") from e
+        if r.status_code == 429 or r.status_code >= 500:
+            raise CheckUnavailable(f"{path} answered {r.status_code}: {str(data.get('detail', ''))[:120]}")
+        return r.status_code, data
 
 
 CheckFn = Callable[[CheckContext, dict], Awaitable[tuple[bool, str]]]
@@ -155,9 +169,12 @@ async def run_checks(ctx: CheckContext, checks: list[dict]) -> list[dict]:
         if fn is None:
             results.append({"check": c, "passed": False, "detail": f"unknown check type {c.get('type')!r}"})
             continue
+        error = False
         try:
             passed, detail = await fn(ctx, c)
+        except CheckUnavailable as e:
+            passed, detail, error = False, f"check couldn't run: {e}", True
         except Exception as e:
             passed, detail = False, f"check errored: {type(e).__name__}: {e}"
-        results.append({"check": c, "passed": passed, "detail": detail})
+        results.append({"check": c, "passed": passed, "detail": detail, **({"error": True} if error else {})})
     return results

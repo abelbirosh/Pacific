@@ -36,6 +36,8 @@ uv run pacific task run tasks/research.json --agent <name>
 uv run pacific task run tasks/build_feature.json --agent <name>
 uv run pacific task show <task_id> --trace
 uv run pacific ledger
+uv run pacific contracts                                  # hires under contract and where their premiums went
+uv run pacific rankings                                   # promise tiers ranked by track record
 ```
 
 `pacific init` without `--seed` gives fresh random names, owners, skills and prices.
@@ -67,7 +69,33 @@ A template is a check whose fields are constraints. For example, `{"type": "db_m
 
 A hire names a tier (`"promise": "standard"`), can pin the version it was quoted (`"promise_version": 2`), and lists acceptance `checks`. The exchange refuses, before any money is held, a hire whose checks fall outside the tier's templates or whose budget is over the cost cap. It then prices the hire by that version and records the version and checks on the call.
 
-Promises are never edited in place. A change adds the next version and supersedes the last, so a hire keeps exactly the terms it was made under, and a buyer pinned to an old version gets a 409. For now acceptance checks are validated and recorded only. Holding the premium in escrow and releasing it when the checks pass comes next.
+Promises are never edited in place. A change adds the next version and supersedes the last, so a hire keeps exactly the terms it was made under, and a buyer pinned to an old version gets a 409. 
+
+A tier is paid one of two ways, and the seller chooses which:
+- **on completion**: the whole premium, only if every acceptance check passes
+- **by progress**: the premium is split across milestones, such as a database's `schema` (40%) and `data` (60%). Each milestone names the check types that judge it, and is paid when its own checks pass. A hire must set at least one check per milestone.
+
+**Contracts and escrow** (`pacific/exchange/contracts.py`). A hire under a promise between accounts with different owners is a contract. An owner hiring their own agent has nothing to guarantee, so their hire isn't one.
+1. **Before anything is held**, every acceptance check is run once and must fail. A check that already passes is either trivial or satisfied by work that predates the hire, so the hire is refused with a 409. Limits (`max_spend`) are exempt.
+2. **The hold** reserves the fee plus the markup on the full budget, as for any hire.
+3. **The seller** works until the promise's turnaround. At the deadline the exchange stops waiting, lets any calls the seller already started finish billing, and verifies whatever exists.
+4. **When the work comes back**, the buyer pays the seller's actual spend at cost.
+   - If the seller says it's done, or the deadline passed, the premium (fee plus the markup on the actual spend) moves into the `Pacific Escrow` account and verification starts.
+   - If it says it failed, no premium moves.
+   - If it declines before spending anything (it can see that the checks can't be met), nobody pays anything.
+5. **Verification** runs the acceptance checks against the work.
+   - A check that can't reach its state (a service is down) has *errored*, which isn't the same as failing. It's retried after each wait in `PACIFIC_VERIFY_BACKOFF` (default 10, 60 and 300 s).
+   - The verdict is **passed** (premium released to the seller), **partial** (the milestones that passed are paid, the rest refunded), or **failed** (premium refunded).
+   - Checks that still can't run after every retry make the contract **unverified**: refunded automatically, and recorded apart from failures, since an outage isn't the seller's doing.
+
+The buyer keeps the results however the contract settles. The seller is never paid on its word alone, and the buyer can never keep a premium that the checks show was earned.
+
+**Track records** (`pacific/tracker.py`). Each tier's contracts give it a record: hires, passed / partial / failed / unverified / declined, and how much of the budget it used. They also give three smoothed rates, where `(k + 1) / (n + 2)` means a tier with no history scores 0.5:
+- `success`: the share of the premium earned
+- `accuracy`: acceptance checks passed
+- `on_time`: delivered before the deadline
+
+The score is `0.6 success + 0.3 accuracy + 0.1 on_time`. Records show in the catalog next to each tier, and `GET /v1/rankings` ranks every tier by score. The `careful` persona hires by rank.
 
 ## Platform services
 
@@ -145,6 +173,8 @@ See `tasks/` for research (rich and shoestring budgets), database, security, cod
 | `POST /v1/quote/{service}/{endpoint}` | worst-case and floor cost for a body |
 | `POST /v1/call/{service}/{endpoint}` | buy; headers `X-Pacific-Job`, `X-Pacific-Max-Cost`; a hire may add `promise`, `promise_version`, `checks` |
 | `GET /v1/jobs/{id}` | budget / spent / held / remaining |
+| `GET /v1/contracts/{id}`, `GET /v1/contracts?status=` | one contract (its parties, their owners or admin), or all of them with totals (admin) |
+| `GET /v1/rankings?skill=` | every promise tier ranked by its track record |
 | `POST /v1/transfer` | send WD to another account |
 | `POST /v1/services` | agent lists a delegation skill |
 | `GET /v1/services/{name}/promises?history=` | an endpoint's current promise tiers (or every version) |
@@ -172,12 +202,21 @@ uv run pacific sim --tasks 100 --no-research                # against servers yo
 - **Invariants** (`pacific/invariants.py`, `GET /v1/admin/invariants`) are polled throughout the run on one consistent snapshot:
   - supply; no negative or overcommitted accounts
   - job budgets; job and call books match the charges
-  - each delegation bill = fee + seller's spend at cost-plus, at the terms of the promise version it was made under
+  - each delegation bill = fee + seller's spend at cost-plus, at the terms of the promise version it was made under (under a contract, the premium part goes to escrow)
+  - escrow holds exactly the premiums not yet paid out; each settled contract paid out exactly its premium; only a passed contract releases all of it, only a partial one some of it
   - one current version per promise tier; no hire over its promise's cost cap
   - every workspace has an owner
   - no unhandled exchange errors
-  - with nothing in flight: no holds, pending calls or running tasks
+  - with nothing in flight: no holds, pending calls, running tasks or open contracts (so escrow is empty)
 - **Report**: pass rate, latency p50/p95, spend, budget used, delegation depth, quotes, fumbles, retries, hires, quits and probes, broken down by persona, task kind and budget class. It also lists invariant violations, probe violations and crashes. Exit code 1 if any were found.
+- **Contracts**: once traffic stops, the run waits for every contract to settle, then reports:
+  - premiums moved into escrow, released and refunded, and what's left in escrow
+  - outcomes and pass rate by tier and by payment model
+  - verification runs per contract
+  - refused hires by status
+  - the rankings
+
+  With `--boot`, checks that can't run are retried after 0.5, 2 and 5 s.
 
 ## Tests
 
@@ -189,6 +228,8 @@ PACIFIC_SOAK=500 uv run pytest tests/test_traffic.py -k soak -s   # long chaos r
 
 ## Known limits
 
+- A contract's work is attributed by workspace and time, not by who wrote it. The must-fail run catches checks that pass before the hire. Something else in the same task tree that writes the deliverable *during* the hire would still count toward it.
+- Verification runs inside the exchange process. A sweeper resumes contracts left verifying after a restart, but a hire that was mid-flight when the exchange stopped is left open, as any call would be.
 - The sandbox enforces resource limits but is **not** a security boundary: code runs as your user with network access, and can read the exchange's `secrets.json` (the adversary persona's `sandbox_reads_host` probe shows this). Put it in a container or VM before untrusted (e.g. LLM-driven) agents use it.
 - Search quality depends on public APIs and their rate limits. A source that fails is reported in `source_errors`, and the call doesn't fail as long as any source succeeds.
 - Everything runs on one machine against one SQLite ledger. The service boundaries are real HTTP, so splitting them out later is mostly deployment work.

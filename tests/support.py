@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -12,6 +14,9 @@ import pytest
 from pacific.config import Config
 
 TASKS = Path(__file__).resolve().parent.parent / "tasks"
+
+# Contracts retry checks that can't run; in tests the waits are short.
+os.environ.setdefault("PACIFIC_VERIFY_BACKOFF", "0.1,0.2,0.4")
 
 
 @contextmanager
@@ -44,7 +49,25 @@ def load(name: str) -> dict:
     return json.loads((TASKS / name).read_text())
 
 
+def settle_contracts(admin: httpx.Client, timeout: float = 30) -> None:
+    """Wait for every contract still working or verifying to settle."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        open_ = [c for status in ("working", "verifying")
+                 for c in admin.get("/v1/contracts", params={"status": status}).json()["contracts"]]
+        if not open_:
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"contracts still open after {timeout}s: {[c['id'] for c in open_]}")
+
+
+def contract(admin: httpx.Client, contract_id: str) -> dict:
+    settle_contracts(admin)
+    return admin.get(f"/v1/contracts/{contract_id}").raise_for_status().json()
+
+
 def assert_books_balance(admin: httpx.Client):
     """Every ledger invariant holds, and nothing is left on hold or pending once work has stopped."""
+    settle_contracts(admin)
     report = admin.get("/v1/admin/invariants", params={"quiescent": True}).json()
     assert report["ok"], report["violations"]

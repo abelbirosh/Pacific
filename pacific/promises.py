@@ -6,7 +6,10 @@ An endpoint offers one or more *tiers* ("standard", "thorough"...). Each tier's 
     checks         check templates: the acceptance checks a buyer may set, and how far
     fee, markup    the premium (paid on top of the seller's actual spend)
     cost_cap       the most the seller will spend on platform services for one hire
-    turnaround_s   how long the seller expects one hire to take
+    turnaround_s   how long one hire may take; at the deadline whatever exists is verified
+    payment        "completion": the whole premium is paid only if every acceptance check passes
+                   "progress": the premium is split across milestones, each paid when its own
+                   checks pass; a milestone names the check types that judge it
 
 Promises are never edited in place. Changing one adds a new version and supersedes the old,
 so a hire made against a version keeps exactly the terms it was quoted.
@@ -32,6 +35,10 @@ valid when it matches some template of its type field by field, with no extra fi
 
 Only checks that read real state can be promised. `output_contains` and `output_matches` read
 the seller's own report, so they can never decide whether a seller has delivered.
+
+Before a hire starts, its acceptance checks are run once and must all fail: a check that already
+passes is either trivial or satisfied by work that predates the hire. Limits (`max_spend`) are
+exempt, since they hold before any work by definition.
 """
 
 from __future__ import annotations
@@ -57,6 +64,8 @@ STATE_CHECKS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "used_service": (("service",), ()),
 }
 SELF_REPORTED = {"output_contains", "output_matches"}
+LIMITS = {"max_spend"}  # constraints rather than deliverables: exempt from the must-fail run
+PAYMENTS = ("completion", "progress")
 
 CONSTRAINTS = ("input", "eq", "str", "strs", "int", "num", "one_of", "json")
 TIER = re.compile(r"^[a-z][a-z0-9_]{1,23}$")
@@ -73,7 +82,7 @@ class PromiseError(ValueError):
 
 
 def validate_terms(tier: str, fee: float, markup_pct: float, cost_cap: float, turnaround_s: int,
-                   deliverables: list, checks: list) -> None:
+                   deliverables: list, checks: list, payment: str = "completion", milestones: list | None = None) -> None:
     """Raise PromiseError unless these are terms an endpoint can promise."""
     if not TIER.match(tier):
         raise PromiseError("tier must be 2-24 lowercase letters, digits or _, starting with a letter")
@@ -94,6 +103,42 @@ def validate_terms(tier: str, fee: float, markup_pct: float, cost_cap: float, tu
         raise PromiseError(f"checks must list 1-{MAX_TEMPLATES} check templates")
     for t in checks:
         _validate_template(t)
+    _validate_payment(payment, milestones or [], {t["type"] for t in checks})
+
+
+def _validate_payment(payment: str, milestones: list, template_types: set[str]) -> None:
+    if payment not in PAYMENTS:
+        raise PromiseError(f"payment must be one of {list(PAYMENTS)}")
+    if payment == "completion":
+        if milestones:
+            raise PromiseError("milestones only apply to progress payment")
+        return
+    if not isinstance(milestones, list) or not 2 <= len(milestones) <= 6:
+        raise PromiseError("progress payment needs 2-6 milestones")
+    seen: dict[str, str] = {}
+    for m in milestones:
+        if not (isinstance(m, dict) and set(m) == {"name", "share_pct", "description", "checks"}):
+            raise PromiseError("each milestone is {name, share_pct, description, checks}")
+        if not (isinstance(m["name"], str) and TIER.match(m["name"])):
+            raise PromiseError("a milestone name is 2-24 lowercase letters, digits or _")
+        if not (isinstance(m["description"], str) and 1 <= len(m["description"]) <= 300):
+            raise PromiseError("a milestone description is a non-empty string up to 300 chars")
+        if not (_number(m["share_pct"]) and 0 < m["share_pct"] <= 100):
+            raise PromiseError("a milestone's share_pct is a number in (0, 100]")
+        if not (isinstance(m["checks"], list) and m["checks"]):
+            raise PromiseError(f"milestone {m['name']} must name the check types that judge it")
+        for kind in m["checks"]:
+            if kind not in template_types:
+                raise PromiseError(f"milestone {m['name']} names {kind!r}, which the promise has no template for")
+            if kind in seen:
+                raise PromiseError(f"{kind!r} judges both {seen[kind]} and {m['name']}")
+            seen[kind] = m["name"]
+    if len({m["name"] for m in milestones}) != len(milestones):
+        raise PromiseError("milestone names must be unique")
+    if abs(sum(m["share_pct"] for m in milestones) - 100) > 1e-9:
+        raise PromiseError("milestone shares must add up to 100")
+    if missing := sorted(template_types - set(seen)):
+        raise PromiseError(f"check types {missing} belong to no milestone")
 
 
 def _validate_template(t) -> None:
@@ -167,6 +212,39 @@ def validate_checks(templates: list[dict], checks, inputs: dict) -> list[str]:
     return errors
 
 
+def hire_errors(promise: dict, checks, inputs: dict) -> list[str]:
+    """Everything wrong with these acceptance checks for a hire under this promise."""
+    errors = validate_checks(promise["checks"], checks, inputs)
+    if errors or promise.get("payment") != "progress":
+        return errors
+    judged = milestone_checks(promise, checks)
+    return [f"milestone {name} has no acceptance check (it is judged by {types})"
+            for name, types in ((m["name"], m["checks"]) for m in promise["milestones"]) if not judged[name]]
+
+
+def milestone_checks(promise: dict, checks: list[dict]) -> dict[str, list[int]]:
+    """For a progress promise: the indexes of the acceptance checks that judge each milestone."""
+    owner = {kind: m["name"] for m in promise["milestones"] for kind in m["checks"]}
+    out: dict[str, list[int]] = {m["name"]: [] for m in promise["milestones"]}
+    for i, c in enumerate(checks):
+        out[owner[c["type"]]].append(i)
+    return out
+
+
+def payout_share(promise: dict, checks: list[dict], results: list[dict]) -> tuple[float, dict]:
+    """The fraction of the premium the seller has earned, given each check's result, and why."""
+    if promise.get("payment") != "progress":
+        ok = all(r["passed"] for r in results)
+        return (1.0 if ok else 0.0), {"completion": ok}
+    paid, by = 0.0, {}
+    for m in promise["milestones"]:
+        idx = milestone_checks(promise, checks)[m["name"]]
+        ok = bool(idx) and all(results[i]["passed"] for i in idx)
+        by[m["name"]] = {"share_pct": m["share_pct"], "passed": ok}
+        paid += m["share_pct"] / 100 if ok else 0.0
+    return min(1.0, paid), by
+
+
 def _mismatch(template: dict, check: dict, inputs: dict) -> str | None:
     fields = set(check) - {"type"}
     if extra := sorted(fields - set(template)):
@@ -230,8 +308,12 @@ def plan(promise: dict) -> PricePlan:
 
 
 def describe(promise: dict) -> str:
+    pay = "paid on completion"
+    if promise.get("payment") == "progress":
+        pay = "paid by milestone (" + ", ".join(f"{m['name']} {m['share_pct']:g}%" for m in promise["milestones"]) + ")"
     return (f"{promise['tier']} v{promise['version']}: {fmt(promise['fee'])} fee + spend at cost "
-            f"+{promise['markup_pct']:g}%, spend up to {fmt(promise['cost_cap'])}, ~{promise['turnaround_s']}s")
+            f"+{promise['markup_pct']:g}%, {pay}, spend up to {fmt(promise['cost_cap'])}, "
+            f"within {promise['turnaround_s']}s")
 
 
 # ---- what each skill promises at genesis --------------------------------------------------------
@@ -298,3 +380,22 @@ SKILL_PROMISES: dict[str, dict[str, tuple[list[dict], list[dict], float, int]]] 
     },
 }
 
+# skill -> the milestones its thorough tier is split into when the seller takes progress payment
+SKILL_MILESTONES: dict[str, list[dict]] = {
+    "research": [
+        {"name": "sources", "share_pct": 40, "description": "Sources found with a ranked search tier",
+         "checks": ["used_service"]},
+        {"name": "brief", "share_pct": 60, "description": "The written brief, saved", "checks": ["storage_contains", "storage_min_bytes"]},
+    ],
+    "database": [
+        {"name": "schema", "share_pct": 40, "description": "Tables and columns created",
+         "checks": ["db_table_exists", "db_columns"]},
+        {"name": "data", "share_pct": 60, "description": "Data seeded and answering queries",
+         "checks": ["db_min_rows", "db_query_equals"]},
+    ],
+    "security_audit": [
+        {"name": "scan", "share_pct": 30, "description": "The code scanned by ocean_shield", "checks": ["used_service"]},
+        {"name": "report", "share_pct": 70, "description": "The audit report, saved",
+         "checks": ["storage_contains", "storage_min_bytes"]},
+    ],
+}
