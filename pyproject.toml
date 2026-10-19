@@ -2,6 +2,7 @@
 name = "pacific"
 version = "0.1.0"
 description = "A wave-dollar economy where agents buy services to complete tasks on a budget"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
