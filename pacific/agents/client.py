@@ -54,6 +54,9 @@ class ExchangeClient:
     def quote(self, service: str, endpoint: str, body: dict) -> float:
         return self._check(self._http.post(f"/v1/quote/{service}/{endpoint}", json=body))["max_cost"]["wd"]
 
+    def rankings(self, skill: str | None = None) -> list[dict]:
+        return self._check(self._http.get("/v1/rankings", params={"skill": skill} if skill else None))["rankings"]
+
     def job(self) -> dict | None:
         if not self.job_id:
             return None

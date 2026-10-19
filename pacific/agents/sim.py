@@ -21,7 +21,8 @@ from pathlib import Path
 
 import httpx
 
-from .brain import MIN_USEFUL_BUDGET, ROUTINES, AgentContext, BrainResult, ScriptedBrain, Task, infer_skill
+from .brain import (MIN_USEFUL_BUDGET, ROUTINES, AgentContext, BrainResult, ScriptedBrain, Task, assess, hire,
+                    hire_options, infer_skill)
 from .client import MarketError
 from .personas import PERSONAS, Persona
 
@@ -47,6 +48,7 @@ class SimStats:
     retries: int = 0
     guard_402s: int = 0
     hires: int = 0
+    refused_hires: dict = field(default_factory=dict)  # status code -> count
     tips: float = 0.0
     gave_up: bool = False
 
@@ -192,6 +194,8 @@ class SimBrain(ScriptedBrain):
         skill = task.skill or infer_skill(task.description)
         if skill is None:
             return BrainResult("failed", f"Can't tell what kind of task this is: {task.description!r}")
+        if reason := assess(task, skill):
+            return BrainResult("declined", f"Declined before starting: {reason}")
         depth = len(task.inputs.get("_chain", []))
         if depth < MAX_CHAIN and (
             skill not in ctx.skills or task.inputs.get("delegate")
@@ -226,35 +230,40 @@ class SimBrain(ScriptedBrain):
         p, rng = self.persona, self.rng
         chain = list(task.inputs.get("_chain", []))
         rogue = p.mischief > 0 and rng.random() < p.mischief  # ignores the chain: hires its own buyers
-        offers = [s for s in ctx.tools.call("list_services", kind="agent", skill=skill)
-                  if s["provider_id"] != ctx.agent_id and (rogue or s["provider_id"] not in chain)]
+        inputs = {k: v for k, v in task.inputs.items() if not k.startswith("_") and k != "delegate"}
+        offers = [o for s in ctx.tools.call("list_services", kind="agent", skill=skill)
+                  if s["provider_id"] != ctx.agent_id and (rogue or s["provider_id"] not in chain)
+                  for o in hire_options(s, task.checks, inputs)]
         if not offers:
             self.stats.decisions.append(f"no seller for {skill}")
             return None
-        price = lambda s: (s["endpoints"][0]["plan"]["per_call"], s["endpoints"][0]["plan"]["markup_pct"])
+        price = lambda o: (o.fee, o.markup, o.service["name"], (o.promise or {}).get("tier", ""))
         if p.hire == "cheapest":
             offer = min(offers, key=price)
         elif p.hire == "priciest":
             offer = max(offers, key=price)
+        elif p.hire == "ranked":  # the best track record, then the cheapest
+            offer = min(offers, key=lambda o: (-o.score, *price(o)))
         else:
-            offer = rng.choice(sorted(offers, key=lambda s: s["name"]))
-        fee, markup = price(offer)
+            offer = rng.choice(sorted(offers, key=price))
         left = min(ctx.remaining(), task.budget)
-        sub_budget = round((left - fee) / (1 + markup / 100) * rng.uniform(*p.hire_share), 4)
+        sub_budget = offer.budget_for(left, rng.uniform(*p.hire_share))
+        tier = f"/{offer.promise['tier']}" if offer.promise else ""
         if sub_budget < MIN_USEFUL_BUDGET.get(skill, 1.0):
-            self.stats.decisions.append(f"{offer['name']} unaffordable with {left:.2f} WD left")
+            self.stats.decisions.append(f"{offer.service['name']}{tier} unaffordable with {left:.2f} WD left")
             return None
-        inputs = {k: v for k, v in task.inputs.items() if not k.startswith("_") and k != "delegate"}
         inputs["_seed"] = rng.randrange(2**31)
         if "_think_scale" in task.inputs:
             inputs["_think_scale"] = task.inputs["_think_scale"]
-        cycle = " (cycle)" if offer["provider_id"] in chain else ""
-        self.stats.decisions.append(f"hire {offer['name']}{cycle} budget={sub_budget} depth={len(chain) + 1}")
+        seller = offer.service
+        cycle = " (cycle)" if seller["provider_id"] in chain else ""
+        self.stats.decisions.append(f"hire {seller['name']}{tier}{cycle} budget={sub_budget} "
+                                    f"checks={len(offer.checks)} depth={len(chain) + 1}")
         try:
-            receipt = ctx.tools.call("hire_agent", service=offer["name"], description=task.description,
-                                     budget=sub_budget, inputs=inputs)
+            receipt = hire(ctx, offer, task.description, sub_budget, inputs)
         except MarketError as e:
-            self.stats.decisions.append(f"hire {offer['name']} refused: {e.status}")
+            self.stats.decisions.append(f"hire {seller['name']}{tier} refused: {e.status}")
+            self.stats.refused_hires[str(e.status)] = self.stats.refused_hires.get(str(e.status), 0) + 1
             return None
         self.stats.hires += 1
         result = receipt.result or {}
@@ -262,14 +271,15 @@ class SimBrain(ScriptedBrain):
         if status == "completed" and p.tip and rng.random() < p.tip:
             amount = round(max(0.01, receipt.cost * rng.uniform(0.02, 0.1)), 4)
             try:
-                ctx.tools.call("transfer", to=offer["provider_id"], amount=amount, memo=f"tip for {offer['name']}")
+                ctx.tools.call("transfer", to=seller["provider_id"], amount=amount, memo=f"tip for {seller['name']}")
                 self.stats.tips = round(self.stats.tips + amount, 6)
             except MarketError as e:
                 self.stats.decisions.append(f"tip refused: {e.status}")
         return BrainResult(
             status,
-            f"Hired {offer['provider']} ({offer['name']}) for {receipt.cost:.4f} WD.\n\n{result.get('output', receipt.error)}",
-            {"hired": offer["name"], "hire_cost": receipt.cost},
+            f"Hired {seller['provider']} ({seller['name']}{tier}) for {receipt.cost:.4f} WD.\n\n"
+            f"{result.get('output', receipt.error)}",
+            {"hired": seller["name"], "tier": (offer.promise or {}).get("tier"), "hire_cost": receipt.cost},
         )
 
     def _browse(self, ctx: AgentContext):

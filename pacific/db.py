@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 
--- kind: treasury | platform | service | person | agent
+-- kind: treasury | platform | service | escrow | person | agent
 CREATE TABLE IF NOT EXISTS accounts (
     id         TEXT PRIMARY KEY,
     kind       TEXT NOT NULL,
@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE TABLE IF NOT EXISTS transactions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     ts         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-    kind       TEXT NOT NULL,              -- mint | transfer | charge
+    kind       TEXT NOT NULL,              -- mint | transfer | charge | escrow | escrow_release | escrow_refund
     from_id    TEXT REFERENCES accounts(id),
     to_id      TEXT NOT NULL REFERENCES accounts(id),
     amount     INTEGER NOT NULL CHECK (amount > 0),
@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS promises (
     turnaround_s INTEGER NOT NULL,
     deliverables TEXT NOT NULL,             -- JSON [{name, description}]
     checks       TEXT NOT NULL,             -- JSON check templates
+    payment      TEXT NOT NULL DEFAULT 'completion', -- completion | progress
+    milestones   TEXT NOT NULL DEFAULT '[]',         -- JSON [{name, share_pct, description, checks}] (progress)
     created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     UNIQUE (service, endpoint, tier, version),
     FOREIGN KEY (service, endpoint) REFERENCES endpoints(service, name)
@@ -119,6 +121,33 @@ CREATE TABLE IF NOT EXISTS calls (
     started_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+-- A hire under a promise between accounts with different owners. The premium waits in escrow
+-- until the acceptance checks are verified, then is released, refunded, or split by milestone.
+CREATE TABLE IF NOT EXISTS contracts (
+    id           TEXT PRIMARY KEY,
+    call_id      TEXT NOT NULL UNIQUE REFERENCES calls(id),
+    promise_id   TEXT NOT NULL REFERENCES promises(id),
+    buyer_id     TEXT NOT NULL REFERENCES accounts(id),
+    seller_id    TEXT NOT NULL REFERENCES accounts(id),
+    buyer_job_id TEXT REFERENCES jobs(id),
+    child_job_id TEXT REFERENCES jobs(id),
+    checks       TEXT NOT NULL,             -- JSON acceptance checks
+    status       TEXT NOT NULL DEFAULT 'working',
+                 -- working | verifying | passed | partial | failed | unverified | declined
+    claim        TEXT,                      -- what the seller said: completed | failed | declined | timeout | error
+    premium      INTEGER NOT NULL DEFAULT 0, -- moved into escrow
+    released     INTEGER NOT NULL DEFAULT 0, -- paid out of escrow to the seller
+    refunded     INTEGER NOT NULL DEFAULT 0, -- paid out of escrow back to the buyer
+    attempts     INTEGER NOT NULL DEFAULT 0, -- verification runs
+    verdict      TEXT,                      -- JSON: check results, milestones paid
+    spent        INTEGER NOT NULL DEFAULT 0, -- the seller's spend on platform services
+    budget       INTEGER NOT NULL DEFAULT 0, -- what the buyer let the seller spend
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    deadline_at  REAL NOT NULL,             -- unix time: the promise's turnaround after the hire
+    returned_at  REAL,                      -- unix time the seller's work came back (or the deadline hit)
+    settled_at   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS tasks (
     id          TEXT PRIMARY KEY,
     agent_id    TEXT NOT NULL REFERENCES accounts(id),
@@ -140,6 +169,8 @@ CREATE INDEX IF NOT EXISTS idx_tx_job ON transactions(job_id);
 CREATE INDEX IF NOT EXISTS idx_calls_job ON calls(job_id);
 CREATE INDEX IF NOT EXISTS idx_holds_active ON holds(account_id, status);
 CREATE INDEX IF NOT EXISTS idx_promises_current ON promises(service, endpoint, tier, status);
+CREATE INDEX IF NOT EXISTS idx_contracts_status ON contracts(status);
+CREATE INDEX IF NOT EXISTS idx_contracts_promise ON contracts(promise_id);
 """
 
 
@@ -161,7 +192,9 @@ class Database:
         """Add columns introduced after a ledger was created."""
         for table, column, decl in (("tasks", "artifacts", "TEXT"),
                                     ("calls", "promise_id", "TEXT REFERENCES promises(id)"),
-                                    ("calls", "acceptance", "TEXT")):
+                                    ("calls", "acceptance", "TEXT"),
+                                    ("promises", "payment", "TEXT NOT NULL DEFAULT 'completion'"),
+                                    ("promises", "milestones", "TEXT NOT NULL DEFAULT '[]'")):
             cols = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if column not in cols:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")

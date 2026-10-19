@@ -3,7 +3,9 @@
 Tasks arrive as a Poisson process, are assigned by their owners to random agents, and run with
 at most `concurrency` in flight. While they run, a monitor polls the exchange's invariants; when
 traffic stops, the run waits for everything to settle and checks once more with nothing in flight.
-The report breaks results down by persona, task kind and budget class.
+The report breaks results down by persona, task kind and budget class, and follows the money
+through contracts: premiums released and refunded, what is left in escrow (nothing, once settled),
+how each tier and payment model did, why hires were refused, and every seller's track record.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ class TrafficConfig:
     research: bool = True            # include research tasks (needs offline search or the internet)
     check_every_s: float = 2.0
     task_timeout_s: float = 600
+    settle_timeout_s: float = 600    # how long to wait for contracts to finish verifying
 
 
 @dataclass
@@ -141,13 +144,69 @@ async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, prog
         await watcher
     wall = time.monotonic() - t_start
     try:
+        settle_s = await settle(admin, cfg.settle_timeout_s)
         final = (await admin.get("/v1/admin/invariants", params={"quiescent": True})).json()
-        note(final["violations"], wall)
+        note(final["violations"], time.monotonic() - t_start)
         audit = (await admin.get("/v1/admin/audit")).json()
+        book = (await admin.get("/v1/contracts", params={"limit": 1_000_000})).json()
+        ranks = (await admin.get("/v1/rankings")).json()["rankings"]
     finally:
         await admin.aclose()
         await http.aclose()
-    return summarize(records, list(violations.values()), wall, cfg, audit, final.get("counts", {}))
+    report = summarize(records, list(violations.values()), wall, cfg, audit, final.get("counts", {}))
+    report["contracts"] = contract_report(book, ranks, records, settle_s)
+    return report
+
+
+async def settle(admin: httpx.AsyncClient, timeout_s: float) -> float:
+    """Wait until no contract is still working or verifying; returns how long that took."""
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < timeout_s:
+        try:
+            open_ = 0
+            for status in ("working", "verifying"):
+                open_ += len((await admin.get("/v1/contracts", params={"status": status})).json()["contracts"])
+        except (httpx.HTTPError, ValueError, KeyError):
+            open_ = 1
+        if not open_:
+            break
+        await asyncio.sleep(0.25)
+    return round(time.monotonic() - t0, 2)
+
+
+def contract_report(book: dict, ranks: list[dict], records: list["TaskRecord"], settle_s: float) -> dict:
+    contracts = book["contracts"]
+    by: dict[str, dict] = {}
+    for c in contracts:
+        for key in (f"tier:{c['tier']}", f"payment:{c['payment']}"):
+            g = by.setdefault(key, {"n": 0, "statuses": Counter(), "premium": 0.0, "released": 0.0, "refunded": 0.0})
+            g["n"] += 1
+            g["statuses"][c["status"]] += 1
+            g["premium"] += c["premium"]["wd"]
+            g["released"] += c["released"]["wd"]
+            g["refunded"] += c["refunded"]["wd"]
+    groups = {}
+    for key, g in sorted(by.items()):
+        settled = sum(g["statuses"][s] for s in ("passed", "partial", "failed"))
+        groups[key] = {"n": g["n"], "statuses": dict(g["statuses"]),
+                       "pass_rate": round(g["statuses"]["passed"] / settled, 3) if settled else None,
+                       "premium_wd": round(g["premium"], 4), "released_wd": round(g["released"], 4),
+                       "refunded_wd": round(g["refunded"], 4)}
+    refused = Counter()
+    for r in records:
+        for status, n in (r.sim.get("refused_hires") or {}).items():
+            refused[status] += n
+    attempts = Counter(c["attempts"] for c in contracts if c["status"] != "declined")
+    return {
+        **book["summary"],
+        "settle_wait_s": settle_s,
+        "by_group": groups,
+        "verification_attempts": dict(sorted(attempts.items())),
+        "refused_hires_by_status": dict(refused),
+        "rankings": [{k: r[k] for k in ("rank", "service", "tier", "payment", "provider", "hires", "settled",
+                                        "passed", "partial", "failed", "unverified", "declined", "success",
+                                        "accuracy", "on_time", "score")} for r in ranks],
+    }
 
 
 # ---- reporting ----------------------------------------------------------------------------------
@@ -262,5 +321,30 @@ def format_report(rep: dict) -> str:
         out += [f"  #{c['n']} {c['kind']} {c['status']}: {(c['error'] or '')[:160]}" for c in rep["crashes"]]
     if rep["known_weaknesses"]:
         out.append(f"known weaknesses confirmed: {rep['known_weaknesses']}")
+    if rep.get("contracts"):
+        out += ["", *format_contracts(rep["contracts"])]
     out.append("RESULT: " + ("OK" if rep["ok"] else "PROBLEMS FOUND"))
     return "\n".join(out)
+
+
+def format_contracts(c: dict) -> list[str]:
+    out = [
+        f"contracts: {c['contracts']}   {c['statuses']}   settled {c['settle_wait_s']}s after traffic stopped",
+        f"premiums: {c['premium_wd']:.4f} WD into escrow, {c['released_wd']:.4f} released to sellers, "
+        f"{c['refunded_wd']:.4f} refunded to buyers, {c['in_escrow_wd']:.4f} still in escrow",
+        f"verification runs per contract: {c['verification_attempts']}   refused hires by status: "
+        f"{c['refused_hires_by_status'] or '{}'}",
+    ]
+    for key, g in c["by_group"].items():
+        rate = "-" if g["pass_rate"] is None else f"{g['pass_rate']:.0%}"
+        out.append(f"  {key:<20} n={g['n']:<4} pass {rate:>4}   released {g['released_wd']:8.4f}   "
+                   f"refunded {g['refunded_wd']:8.4f}   {g['statuses']}")
+    ranked = [r for r in c["rankings"] if r["hires"]]
+    if ranked:
+        out.append("rankings (tiers with hires):")
+        for r in ranked[:15]:
+            out.append(f"  #{r['rank']:<3} {r['service'] + '/' + r['tier']:<32} score {r['score']:.3f}  "
+                       f"success {r['success']:.2f} accuracy {r['accuracy']:.2f} on time {r['on_time']:.2f}  "
+                       f"{r['passed']}/{r['partial']}/{r['failed']} pass/partial/fail, {r['unverified']} unverified, "
+                       f"{r['declined']} declined")
+    return out

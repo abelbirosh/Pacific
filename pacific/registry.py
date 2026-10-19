@@ -52,9 +52,11 @@ def register_agent_offering(conn: sqlite3.Connection, agent_id: str, agent_name:
 
 
 def put_promise(conn: sqlite3.Connection, service: str, endpoint: str, tier: str, fee: float, markup_pct: float,
-                cost_cap: float, turnaround_s: int, deliverables: list, checks: list) -> str:
+                cost_cap: float, turnaround_s: int, deliverables: list, checks: list, payment: str = "completion",
+                milestones: list | None = None) -> str:
     """List a tier's promise, or change it: the next version becomes current and the last is superseded."""
-    promises.validate_terms(tier, fee, markup_pct, cost_cap, turnaround_s, deliverables, checks)
+    milestones = milestones or []
+    promises.validate_terms(tier, fee, markup_pct, cost_cap, turnaround_s, deliverables, checks, payment, milestones)
     tiers = {r[0] for r in conn.execute(
         "SELECT tier FROM promises WHERE service = ? AND endpoint = ? AND status = 'active'", (service, endpoint))}
     if tier not in tiers and len(tiers) >= promises.MAX_TIERS:
@@ -66,9 +68,9 @@ def put_promise(conn: sqlite3.Connection, service: str, endpoint: str, tier: str
     promise_id = new_id("prom")
     conn.execute(
         "INSERT INTO promises(id, service, endpoint, tier, version, fee, markup_pct, cost_cap, turnaround_s, "
-        "deliverables, checks) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "deliverables, checks, payment, milestones) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (promise_id, service, endpoint, tier, last + 1, to_micro(fee), float(markup_pct), to_micro(cost_cap),
-         turnaround_s, json.dumps(deliverables), json.dumps(checks)),
+         turnaround_s, json.dumps(deliverables), json.dumps(checks), payment, json.dumps(milestones)),
     )
     return promise_id
 
@@ -85,7 +87,7 @@ def promise_dict(row: sqlite3.Row) -> dict:
         "version": row["version"], "status": row["status"], "fee": row["fee"], "markup_pct": row["markup_pct"],
         "cost_cap": row["cost_cap"], "turnaround_s": row["turnaround_s"],
         "deliverables": json.loads(row["deliverables"]), "checks": json.loads(row["checks"]),
-        "created_at": row["created_at"],
+        "payment": row["payment"], "milestones": json.loads(row["milestones"]), "created_at": row["created_at"],
     }
 
 
@@ -105,6 +107,8 @@ class Registry:
             "WHERE (? IS NULL OR s.kind = ?) ORDER BY s.kind DESC, s.name",
             (kind, kind),
         )
+        from . import tracker  # the tracker reads contracts, which reference this registry's promises
+        recs = tracker.records(self.db)
         out = []
         for s in rows:
             meta = json.loads(s["meta"])
@@ -119,7 +123,8 @@ class Registry:
                     "price": plan.describe(),
                     "plan": plan.to_dict(),
                     "params": json.loads(e["params"]),
-                    "promises": [self.public(p) for p in self.promises(s["name"], e["name"])],
+                    "promises": [{**self.public(p), "record": recs.get((s["name"], e["name"], p["tier"]), tracker.blank())}
+                                 for p in self.promises(s["name"], e["name"])],
                 })
             out.append({
                 "name": s["name"], "kind": s["kind"], "provider_id": s["provider_id"],
