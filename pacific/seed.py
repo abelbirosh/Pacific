@@ -8,7 +8,7 @@ import secrets as pysecrets
 import shutil
 
 from .agents.brain import SKILL_DESCRIPTIONS, SKILLS, make_brain
-from .agents.personas import PERSONAS
+from .agents.personas import DEFAULT_MIX, PERSONAS
 from .config import Config
 from .db import Database
 from .ids import new_api_key
@@ -24,8 +24,13 @@ from .services.catalog import PLATFORM_SERVICES, request_schemas
 def genesis(config: Config, seed: int | None = None, supply: float = 1_000_000, n_agents: int = 5,
             force: bool = False, brain: str = "scripted") -> dict:
     """`brain` is given to every agent ("scripted", "sim:frugal"...); plain "sim" deals the
-    personas out so the market has a mix of them."""
-    if brain != "sim":
+    personas out so the market has a mix of them, and "sim:a,b,c" deals out just those."""
+    dealt = list(DEFAULT_MIX) if brain == "sim" else None
+    if brain.startswith("sim:") and "," in brain:
+        dealt = [p.strip() for p in brain[4:].split(",") if p.strip()]
+        if unknown := [p for p in dealt if p not in PERSONAS]:
+            raise ValueError(f"unknown personas {unknown}; available: {sorted(PERSONAS)}")
+    if dealt is None:
         make_brain(brain)  # fail fast on a bad name
     if config.home.exists():
         if not force:
@@ -59,10 +64,11 @@ def genesis(config: Config, seed: int | None = None, supply: float = 1_000_000, 
             }
             register_service(conn, name, "platform", acct, spec["description"], config.services_url, endpoints)
 
-        personas = rng.sample(sorted(PERSONAS), len(PERSONAS))
+        # an explicit list is dealt in order; the full roster is shuffled
+        personas = dealt if brain != "sim" else rng.sample(dealt, len(dealt))
         used_names: set[str] = set()
         for i in range(n_agents):
-            agent_brain = f"sim:{personas[i % len(personas)]}" if brain == "sim" else brain
+            agent_brain = f"sim:{personas[i % len(personas)]}" if dealt is not None else brain
             pname = person_name(rng)
             while pname in used_names:
                 pname = person_name(rng)

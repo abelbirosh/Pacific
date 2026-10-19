@@ -32,6 +32,7 @@ class Persona:
     tip: float = 0.0                      # tips a hired agent from its wallet after a success
     mischief: float = 0.0                 # runs each probe of the exchange's defences; ignores chains
     think_s: float = 0.0                  # mean pause before a decision (× PACIFIC_THINK_SCALE)
+    shirk: float = 0.0                    # when hired: claims done having delivered nothing, or half the job
 
 
 PERSONAS: dict[str, Persona] = {p.name: p for p in (
@@ -55,4 +56,10 @@ PERSONAS: dict[str, Persona] = {p.name: p for p in (
     Persona("adversary", "Probes the exchange: overspends, hijacks jobs, self-deals, loops chains.",
             browse=0.5, quote_first=0.2, tier="random", delegate=0.25, hire="random", max_depth=6,
             sloppy=0.2, mischief=0.6, think_s=0.3),
+    Persona("shirker", "Takes hires, then claims done having delivered nothing or only half the job.",
+            browse=0.2, tier="random", delegate=0.1, hire="random", shirk=0.6, think_s=0.3),
 )}
+
+# Plain `--brain sim` deals these out. The shirker is opt-in (`--brain sim:shirker,careful,...`), and
+# keeping it out leaves seeded worlds exactly as they were before it existed.
+DEFAULT_MIX = tuple(p for p in sorted(PERSONAS) if p != "shirker")

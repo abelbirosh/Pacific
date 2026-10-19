@@ -4,6 +4,12 @@ Each generator returns a task spec (title, description, skill, budget, inputs, c
 estimate of what a competent agent would spend. Budgets are then drawn relative to that estimate:
 mostly comfortable, sometimes generous, and sometimes too tight to finish, the way real owners
 budget. Everything is drawn from one seeded RNG, so a workload can be regenerated exactly.
+
+With `impossible_rate`, some database and code_run tasks get an acceptance check no honest work
+can meet: more rows than the seed provides (a seller can see that and decline), or a total that
+doesn't match the data, or program output that never appears (a seller can't see those coming,
+so its work fails the checks and the premium is refunded). They're marked impossible and left out
+of the pass rate.
 """
 
 from __future__ import annotations
@@ -54,12 +60,12 @@ class Generated:
 
 class Workload:
     def __init__(self, seed: int | None = None, mix: dict[str, float] | None = None, research: bool = True,
-                 delegate_rate: float = 0.1, pipeline_rate: float = 0.08):
+                 delegate_rate: float = 0.1, pipeline_rate: float = 0.08, impossible_rate: float = 0.0):
         self.rng = random.Random(seed)
         self.mix = mix or {"database": 0.25, "code_run": 0.3, "security_audit": 0.2, "research": 0.25}
         if not research:
             self.mix = {k: v for k, v in self.mix.items() if k != "research"}
-        self.delegate_rate, self.pipeline_rate = delegate_rate, pipeline_rate
+        self.delegate_rate, self.pipeline_rate, self.impossible_rate = delegate_rate, pipeline_rate, impossible_rate
         self.n = 0
 
     def next(self) -> Generated:
@@ -68,6 +74,9 @@ class Workload:
             g = self._pipeline()
         else:
             g = self._one(self._pick_kind())
+            # draw only when asked for, so workloads without impossible tasks stay exactly as they were
+            if self.impossible_rate and g.kind in ("database", "code_run") and self.rng.random() < self.impossible_rate:
+                self._make_impossible(g)
         cls, _, (lo, hi) = self._pick(BUDGET_CLASSES)
         g.budget_class = cls
         g.spec["budget"] = round(max(0.3, g.estimate * self.rng.uniform(lo, hi)), 2)
@@ -192,6 +201,22 @@ class Workload:
             "checks": [{"type": "storage_contains", "key": key, "text": ["# Research", "## Sources"]},
                        {"type": "used_service", "service": ["ocean_exa", "ocean_tavily", "ocean_brave"]}],
         }, estimate=r.choice([1.0, 4.0, 7.5]), kind="research")
+
+    def _make_impossible(self, g: Generated) -> None:
+        r, checks = self.rng, g.spec["checks"]
+        if g.kind == "database":
+            how = r.choice(["more_rows", "wrong_total"])
+            for c in checks:
+                if how == "more_rows" and c["type"] == "db_min_rows":
+                    c["min"] += r.randint(1, 20)
+                elif how == "wrong_total" and c["type"] == "db_query_equals":
+                    c["expected"] += r.randint(1, 999)
+        else:
+            how = "wrong_output"
+            for c in checks:
+                if c["type"] == "storage_contains":
+                    c["text"] = f"{c['text']} (and then some)"
+        g.meta.update(impossible=True, impossible_how=how)
 
     def _pipeline(self) -> Generated:
         kinds = [k for k in self.mix if k in ("database", "code_run", "security_audit", "research")]

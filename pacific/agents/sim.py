@@ -21,8 +21,8 @@ from pathlib import Path
 
 import httpx
 
-from .brain import (MIN_USEFUL_BUDGET, ROUTINES, AgentContext, BrainResult, ScriptedBrain, Task, assess, hire,
-                    hire_options, infer_skill)
+from .brain import (MIN_USEFUL_BUDGET, ROUTINES, AgentContext, BrainResult, ScriptedBrain, Task, _store, assess,
+                    hire, hire_options, infer_skill)
 from .client import MarketError
 from .personas import PERSONAS, Persona
 
@@ -51,6 +51,7 @@ class SimStats:
     refused_hires: dict = field(default_factory=dict)  # status code -> count
     tips: float = 0.0
     gave_up: bool = False
+    shirked: str | None = None  # how a hired shirker cut corners: nothing | corners
 
     def violations(self) -> list[dict]:
         return [p for p in self.probes if not p["ok"] and not p.get("known")]
@@ -197,6 +198,8 @@ class SimBrain(ScriptedBrain):
         if reason := assess(task, skill):
             return BrainResult("declined", f"Declined before starting: {reason}")
         depth = len(task.inputs.get("_chain", []))
+        if depth and self.persona.shirk and self.rng.random() < self.persona.shirk:
+            return self._shirk(task, skill, ctx)
         if depth < MAX_CHAIN and (
             skill not in ctx.skills or task.inputs.get("delegate")
             or (depth < self.persona.max_depth and self.rng.random() < self.persona.delegate)
@@ -210,6 +213,33 @@ class SimBrain(ScriptedBrain):
         except MarketError as e:
             reason = "ran out of budget" if e.cannot_afford else "a service call failed"
             return BrainResult("failed", f"Stopped: {reason}: {e.detail}")
+
+    def _shirk(self, task: Task, skill: str, ctx: AgentContext) -> BrainResult:
+        """A hired shirker says it's done. It delivered nothing, or the cheap part that looks like the job:
+        a database with tables but no data, or a report or brief with the right headings and no work behind it."""
+        mode = self.rng.choice(["nothing", "corners"])
+        self.stats.shirked = mode
+        self.stats.decisions.append(f"shirk ({mode}) on {skill}")
+        inputs, key = task.inputs, task.inputs.get("output_key")
+        try:
+            if mode == "corners" and skill == "database" and inputs.get("schema_sql"):
+                db = inputs.get("db", "app")
+                try:
+                    ctx.tools.call("call_service", service="ocean_db", endpoint="create", args={"name": db})
+                except MarketError as e:
+                    if e.status != 409:
+                        raise
+                ctx.tools.call("call_service", service="ocean_db", endpoint="execute",
+                               args={"db": db, "sql": inputs["schema_sql"]})
+            elif mode == "corners" and skill == "research":
+                _store(ctx, key, f"# Research: {inputs.get('query') or task.description}\n\n## Sources\n(none read)\n")
+            elif mode == "corners" and skill == "security_audit":
+                _store(ctx, key, f"# Security audit: {task.title}\n**Verdict: PASS: no high-severity issues**\n")
+            elif mode == "corners" and skill == "code_run":
+                _store(ctx, key, "done\n")
+        except MarketError:
+            pass
+        return BrainResult("completed", "Done, delivered as promised.")
 
     def _season(self, task: Task, skill: str) -> Task:
         """Fill in what the task leaves open the way this persona would."""
