@@ -7,6 +7,11 @@ Every purchase goes through `POST /v1/call/{service}/{endpoint}`:
     2. forward to the provider: the platform services host, or an agent (delegation)
     3. compute the actual cost from reported usage and settle: charge provider, release rest
 
+A hire can name one of the endpoint's promise tiers (`promise`), optionally pinned to the version
+the buyer was quoted (`promise_version`), with acceptance `checks` the promise's templates allow.
+The hire is then priced by that version and the version is recorded on the call, so a seller
+changing its promise later never changes a hire already made.
+
 Delegation opens a child job for the hired agent, with the buyer's stated budget. The hired
 agent pays for its own platform calls under that job, and the buyer is then charged the
 agent's fee plus that spend at cost-plus. All resources created anywhere in one task tree
@@ -27,12 +32,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ..config import Config
-from .. import invariants
+from .. import invariants, promises
 from ..db import Database
 from ..ids import new_id
 from ..ledger import Ledger, LedgerError
 from ..money import fmt, to_micro, to_wd
-from ..registry import Registry, register_agent_offering
+from ..registry import Registry, put_promise, register_agent_offering, retire_promise
 from .checks import CheckContext, run_checks
 
 PLATFORM_TIMEOUT = 120
@@ -59,6 +64,10 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
     @app.exception_handler(LedgerError)
     async def ledger_error(_, exc: LedgerError):
         return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
+
+    @app.exception_handler(promises.PromiseError)
+    async def promise_error(_, exc: promises.PromiseError):
+        return JSONResponse({"detail": str(exc)}, status_code=400)
 
     # The exchange should refuse bad input, never fall over on it. Unhandled exceptions are kept
     # (most recent 100) and reported by /v1/admin/invariants.
@@ -137,6 +146,76 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
                                            req.fee, req.markup_pct, config.agents_url)
         return {"service": name}
 
+    # ---- promises ---------------------------------------------------------------------------
+
+    class PromiseIn(BaseModel):
+        endpoint: str = "delegate"
+        fee: float
+        markup_pct: float
+        cost_cap: float
+        turnaround_s: int
+        deliverables: list
+        checks: list
+
+    def _own_endpoint(name: str, endpoint: str, acct) -> None:
+        svc = registry.service(name)
+        if svc is None or registry.endpoint(name, endpoint) is None:
+            raise HTTPException(404, f"no endpoint {name}/{endpoint}")
+        if svc["provider_id"] != acct["id"]:
+            raise HTTPException(403, "only the service's provider can change its promises")
+
+    @app.get("/v1/services/{name}/promises")
+    def list_promises(name: str, endpoint: str = "delegate", history: bool = False):
+        if registry.endpoint(name, endpoint) is None:
+            raise HTTPException(404, f"no endpoint {name}/{endpoint}")
+        return {"promises": [registry.public(p) for p in registry.promises(name, endpoint, history)]}
+
+    @app.put("/v1/services/{name}/promises/{tier}")
+    def set_promise(name: str, tier: str, req: PromiseIn, acct=Depends(account)):
+        """List a tier, or change its terms. A change is a new version; hires keep the version they got."""
+        _own_endpoint(name, req.endpoint, acct)
+        with db.tx() as conn:
+            promise_id = put_promise(conn, name, req.endpoint, tier, req.fee, req.markup_pct, req.cost_cap,
+                                     req.turnaround_s, req.deliverables, req.checks)
+        return registry.public(registry.promise_by_id(promise_id))
+
+    @app.delete("/v1/services/{name}/promises/{tier}")
+    def drop_promise(name: str, tier: str, endpoint: str = "delegate", acct=Depends(account)):
+        _own_endpoint(name, endpoint, acct)
+        with db.tx() as conn:
+            if not retire_promise(conn, name, endpoint, tier):
+                raise HTTPException(404, f"{name}/{endpoint} offers no tier {tier!r}")
+        return {"ok": True, "retired": tier}
+
+    def _terms(svc, ep, body: dict):
+        """The plan a call is priced by and, for a hire under a promise, that promise and its checks."""
+        tier, checks = body.get("promise"), body.get("checks")
+        if tier is None:
+            if checks is not None:
+                raise HTTPException(400, "acceptance `checks` need a `promise` tier to be judged against")
+            return registry.plan(ep), None, None
+        if svc["kind"] != "agent":
+            raise HTTPException(400, "platform services don't offer promises")
+        if not isinstance(tier, str):
+            raise HTTPException(400, "`promise` names a tier, e.g. \"standard\"")
+        promise = registry.promise(svc["name"], ep["name"], tier)
+        if promise is None:
+            offered = [p["tier"] for p in registry.promises(svc["name"], ep["name"])]
+            raise HTTPException(404, f"{svc['name']}/{ep['name']} offers no tier {tier!r}; it offers {offered}")
+        pinned = body.get("promise_version")
+        if pinned is not None and pinned != promise["version"]:
+            raise HTTPException(409, f"the {tier} promise is at version {promise['version']}, not {pinned}; "
+                                     "quote it again to see the new terms")
+        budget = body.get("budget")
+        if isinstance(budget, (int, float)) and not isinstance(budget, bool) and budget > to_wd(promise["cost_cap"]):
+            raise HTTPException(400, f"budget {budget} WD is over the {tier} promise's cost cap of "
+                                     f"{fmt(promise['cost_cap'])}")
+        checks = [] if checks is None else checks
+        inputs = body.get("inputs") if isinstance(body.get("inputs"), dict) else {}
+        if errors := promises.validate_checks(promise["checks"], checks, inputs):
+            raise HTTPException(400, {"message": f"checks the {tier} promise doesn't allow", "errors": errors})
+        return promises.plan(promise), promise, checks
+
     def _price(plan, body: dict) -> int:
         try:
             return plan.max_cost(body)
@@ -149,8 +228,10 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         if ep is None:
             raise HTTPException(404, f"no endpoint {service}/{endpoint}")
         body = await _json(request)
-        plan = registry.plan(ep)
-        return {"max_cost": money(_price(plan, body)), "floor": money(to_micro(plan.per_call)), "price": plan.describe()}
+        svc = registry.service(service)
+        plan, promise, _ = _terms(svc, ep, body)
+        out = {"max_cost": money(_price(plan, body)), "floor": money(to_micro(plan.per_call)), "price": plan.describe()}
+        return {**out, "promise": registry.public(promise)} if promise else out
 
     # ---- money movement ---------------------------------------------------------------------
 
@@ -204,7 +285,7 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         if svc["provider_id"] == acct["id"]:
             raise HTTPException(400, "an agent cannot buy its own service")
         body = await _json(request)
-        plan = registry.plan(ep)
+        plan, promise, acceptance = _terms(svc, ep, body)
 
         job = None
         if x_pacific_job:
@@ -224,8 +305,10 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
         with db.tx() as conn:
             hold_id = ledger.place_hold(conn, acct["id"], hold_amount, x_pacific_job)
             conn.execute(
-                "INSERT INTO calls(id, caller_id, service, endpoint, job_id, held) VALUES (?,?,?,?,?,?)",
-                (call_id, acct["id"], service, endpoint, x_pacific_job, hold_amount),
+                "INSERT INTO calls(id, caller_id, service, endpoint, job_id, held, promise_id, acceptance) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (call_id, acct["id"], service, endpoint, x_pacific_job, hold_amount,
+                 promise["id"] if promise else None, None if acceptance is None else json.dumps(acceptance)),
             )
 
         workspace = job["root_job_id"] if job else acct["id"]
@@ -293,6 +376,8 @@ def create_app(config: Config, db: Database | None = None) -> FastAPI:
             "cost": money(charged), "units": units, "latency_ms": latency,
             "job": _job_brief(x_pacific_job),
         }
+        if promise:
+            receipt["promise"] = {"id": promise["id"], "tier": promise["tier"], "version": promise["version"]}
         if status != "ok" and svc["kind"] == "platform":
             return JSONResponse({**receipt, "detail": error}, status_code=http_status if http_status >= 400 else 502)
         return {**receipt, "result": payload, "error": error}

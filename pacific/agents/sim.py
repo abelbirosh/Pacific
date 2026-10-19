@@ -339,6 +339,19 @@ class Probes:
                 ("assign_task_to_others", {403}, lambda: self.client.raw("POST", "/v1/tasks", json={
                     "agent": other["provider_id"], "title": "x", "description": "x", "budget": 1})),
             ]
+            tiers = other["endpoints"][0].get("promises") or []
+            if tiers:
+                tier = tiers[0]
+                probes += [
+                    ("unpromisable_checks", {400}, hire(other, {"description": "x", "budget": 1, "promise": tier["tier"],
+                                                                "checks": [{"type": "output_contains", "text": "done"}]})),
+                    ("over_cap_hire", {400}, hire(other, {"description": "x", "budget": tier["cost_cap"] + 1,
+                                                          "promise": tier["tier"]})),
+                    ("rewrite_others_promise", {403}, lambda: self.client.raw(
+                        "PUT", f"/v1/services/{other['name']}/promises/{tier['tier']}",
+                        json={k: tier[k] for k in ("fee", "markup_pct", "cost_cap", "turnaround_s", "deliverables", "checks")}
+                        | {"fee": 0})),
+                ]
         if self.job:
             parent = (self.client.job() or {}).get("parent_job_id")
             if parent:

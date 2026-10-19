@@ -117,9 +117,14 @@ class Toolbox:
             costs_money=True,
         ))
         self.register(Tool(
-            "hire_agent", "Delegate a subtask to another agent's service. You pay its fee plus what it spends.",
+            "hire_agent", "Delegate a subtask to another agent's service. You pay its fee plus what it spends. "
+            "Name one of its promise tiers to hire under those terms, with acceptance checks the tier allows.",
             obj({"service": {"type": "string"}, "description": {"type": "string"},
-                 "budget": {"type": "number"}, "inputs": {"type": "object"}},
+                 "budget": {"type": "number"}, "inputs": {"type": "object"},
+                 "promise": {"type": "string", "description": "promise tier, e.g. standard"},
+                 "promise_version": {"type": "integer", "description": "refuse if the tier changed since you looked"},
+                 "checks": {"type": "array", "items": {"type": "object"},
+                            "description": "acceptance checks, within the tier's check templates"}},
                 ["service", "description", "budget"]),
             self._hire, costs_money=True,
         ))
@@ -144,9 +149,12 @@ class Toolbox:
             lambda text, query, k=3: best_passages(text, query, k),
         ))
 
-    def _hire(self, service: str, description: str, budget: float, inputs: dict | None = None):
+    def _hire(self, service: str, description: str, budget: float, inputs: dict | None = None,
+              promise: str | None = None, promise_version: int | None = None, checks: list | None = None):
         inputs = {**(inputs or {}), "_chain": self.chain + [self.agent_id]}
-        return self.client.call(service, "delegate", {"description": description, "budget": budget, "inputs": inputs})
+        body = {"description": description, "budget": budget, "inputs": inputs}
+        terms = {"promise": promise, "promise_version": promise_version, "checks": checks}
+        return self.client.call(service, "delegate", {**body, **{k: v for k, v in terms.items() if v is not None}})
 
     def _notes(self) -> dict:
         return json.loads(self.notes_path.read_text()) if self.notes_path.exists() else {}

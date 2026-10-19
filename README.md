@@ -31,7 +31,7 @@ In another terminal:
 
 ```bash
 uv run pacific status                                     # supply, invariant, every balance
-uv run pacific services                                   # catalog with price plans
+uv run pacific services                                   # catalog with price plans and promise tiers
 uv run pacific task run tasks/research.json --agent <name>
 uv run pacific task run tasks/build_feature.json --agent <name>
 uv run pacific task show <task_id> --trace
@@ -55,6 +55,19 @@ uv run pacific ledger
 **Jobs.** A job is a budget scope. Each task opens a root job. When an agent calls with `X-Pacific-Job`, spending counts against that budget. Hiring an agent opens a *child job* for the seller with the budget the buyer chose. The seller pays its own platform costs, and the buyer is then billed fee + cost-plus. Everything created anywhere in one task tree lands in the root job's **workspace**, so checks can find it.
 
 **Checks** (`pacific/exchange/checks.py`). Once the agent finishes, the exchange inspects real state: `storage_contains`, `storage_min_bytes`, `db_table_exists`, `db_columns`, `db_min_rows`, `db_query_equals`, `security_scan_clean`, `output_contains`, `output_matches`, `max_spend`, `used_service`. A task **passes** only if the agent reports completion *and* every check passes.
+
+**Promises** (`pacific/promises.py`). An agent's endpoint offers one or more *tiers* (genesis lists `standard` and `thorough` for each skill). Each tier's promise states:
+- its deliverables
+- the premium: a fee plus a markup on what the seller actually spends
+- a cost cap: the most the seller will spend on one hire
+- a turnaround time
+- **check templates**: which acceptance checks a buyer may set, and how far
+
+A template is a check whose fields are constraints. For example, `{"type": "db_min_rows", "db": {"input": "db"}, "table": {"str": {}}, "min": {"int": {"max": 100}}}` lets a buyer require up to 100 rows in any table of the database named in the hire's inputs. Only checks that read real state can be promised. `output_contains` and `output_matches` read the seller's own report, so they can't be.
+
+A hire names a tier (`"promise": "standard"`), can pin the version it was quoted (`"promise_version": 2`), and lists acceptance `checks`. The exchange refuses, before any money is held, a hire whose checks fall outside the tier's templates or whose budget is over the cost cap. It then prices the hire by that version and records the version and checks on the call.
+
+Promises are never edited in place. A change adds the next version and supersedes the last, so a hire keeps exactly the terms it was made under, and a buyer pinned to an old version gets a 409. For now acceptance checks are validated and recorded only. Holding the premium in escrow and releasing it when the checks pass comes next.
 
 ## Platform services
 
@@ -84,7 +97,7 @@ Every tool has a JSON schema (`toolbox.specs()`), so an LLM brain can take them 
 The included **`ScriptedBrain`** is a deterministic stub that still makes budget decisions:
 - research: quotes exa → tavily → brave and picks the best tier the budget allows
 - code_run: shrinks the sandbox timeout until the worst case fits the budget
-- delegation: when it lacks a skill (or `inputs.delegate` is set), it hires the cheapest agent selling that skill and passes along most of its remaining budget. It never hires an agent already in the delegation chain.
+- delegation: when it lacks a skill (or `inputs.delegate` is set), it hires the cheapest agent and promise tier selling that skill and passes along most of its remaining budget, up to the tier's cost cap. Its own task checks that the tier allows go along as acceptance checks. It never hires an agent already in the delegation chain.
 - `inputs.steps`: runs a multi-step plan and delegates per step
 
 **`SimBrain`** (`pacific/agents/sim.py`) runs the same routines, but makes its choices the way a population of imperfect LLM agents would, using a **persona** (`pacific/agents/personas.py`) and an RNG seeded from `inputs._seed`, so any run can be replayed:
@@ -97,7 +110,7 @@ The included **`ScriptedBrain`** is a deterministic stub that still makes budget
 | `delegator` | hires out work it could do itself, builds chains up to 4 deep, tips sellers |
 | `sloppy` | sends a malformed call first (typo'd endpoint, missing or mistyped arg), misjudges max cost, retries, sometimes quits |
 | `quitter` | abandons about a third of its tasks after 0-2 paid calls |
-| `adversary` | probes the exchange: overspending, hijacking a parent job, self-dealing, admin endpoints, path traversal, malformed bodies, non-finite budgets, hiring its own buyers (cycles) |
+| `adversary` | probes the exchange: overspending, hijacking a parent job, self-dealing, admin endpoints, path traversal, malformed bodies, non-finite budgets, hiring its own buyers (cycles), acceptance checks no promise allows, hires over a tier's cost cap, rewriting another seller's promise |
 
 Each probe must be refused with the expected status and must not move the job's spend; one that isn't is listed under `artifacts.sim.violations` and in the task output. The task report's `artifacts.sim` also records the seed, decisions, quotes, fumbles, retries, hires and tips.
 
@@ -130,10 +143,12 @@ See `tasks/` for research (rich and shoestring budgets), database, security, cod
 | `GET /v1/me` | identity, balance, available (after holds) |
 | `GET /v1/services?kind=&skill=` | catalog, price plans, request schemas |
 | `POST /v1/quote/{service}/{endpoint}` | worst-case and floor cost for a body |
-| `POST /v1/call/{service}/{endpoint}` | buy; headers `X-Pacific-Job`, `X-Pacific-Max-Cost` |
+| `POST /v1/call/{service}/{endpoint}` | buy; headers `X-Pacific-Job`, `X-Pacific-Max-Cost`; a hire may add `promise`, `promise_version`, `checks` |
 | `GET /v1/jobs/{id}` | budget / spent / held / remaining |
 | `POST /v1/transfer` | send WD to another account |
 | `POST /v1/services` | agent lists a delegation skill |
+| `GET /v1/services/{name}/promises?history=` | an endpoint's current promise tiers (or every version) |
+| `PUT /v1/services/{name}/promises/{tier}`, `DELETE ...` | the provider lists or changes a tier (a new version), or retires it |
 | `POST /v1/tasks`, `POST /v1/tasks/{id}/run`, `GET /v1/tasks/{id}` | task lifecycle and report (admin, or the agent's owner) |
 | `GET /v1/admin/{accounts,transactions,audit}`, `POST /v1/admin/{mint,transfer}` | admin |
 
@@ -157,7 +172,8 @@ uv run pacific sim --tasks 100 --no-research                # against servers yo
 - **Invariants** (`pacific/invariants.py`, `GET /v1/admin/invariants`) are polled throughout the run on one consistent snapshot:
   - supply; no negative or overcommitted accounts
   - job budgets; job and call books match the charges
-  - each delegation bill = fee + seller's spend at cost-plus
+  - each delegation bill = fee + seller's spend at cost-plus, at the terms of the promise version it was made under
+  - one current version per promise tier; no hire over its promise's cost cap
   - every workspace has an owner
   - no unhandled exchange errors
   - with nothing in flight: no holds, pending calls or running tasks

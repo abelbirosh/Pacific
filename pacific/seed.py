@@ -15,7 +15,8 @@ from .ids import new_api_key
 from .ledger import Ledger
 from .money import to_micro
 from .names import agent_name, person_name
-from .registry import register_agent_offering, register_service
+from .promises import SKILL_PROMISES
+from .registry import put_promise, register_agent_offering, register_service
 from .services import app as services_app
 from .services.catalog import PLATFORM_SERVICES, request_schemas
 
@@ -80,8 +81,15 @@ def genesis(config: Config, seed: int | None = None, supply: float = 1_000_000, 
             for skill in skills:
                 fee = round(rng.uniform(0.5, 4.0), 2)
                 markup = float(rng.choice([5, 10, 15, 20, 25]))
-                offerings.append(register_agent_offering(conn, agent, aname, skill, SKILL_DESCRIPTIONS[skill], fee,
-                                                         markup, config.agents_url))
+                offering = register_agent_offering(conn, agent, aname, skill, SKILL_DESCRIPTIONS[skill], fee,
+                                                   markup, config.agents_url)
+                offerings.append(offering)
+                # standard is the listed price; thorough lets the buyer demand more, for a bigger premium
+                premiums = {"standard": (fee, markup),
+                            "thorough": (round(fee * rng.uniform(1.6, 2.4), 2), markup + rng.choice([5, 10, 15]))}
+                for tier, (deliverables, checks, cost_cap, turnaround_s) in SKILL_PROMISES[skill].items():
+                    put_promise(conn, offering, "delegate", tier, *premiums[tier], cost_cap, turnaround_s,
+                                deliverables, checks)
             secrets["agents"][agent] = {"name": aname, "key": akey, "owner": person, "skills": skills,
                                         "brain": agent_brain, "offerings": offerings}
 

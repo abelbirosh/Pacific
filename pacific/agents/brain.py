@@ -15,6 +15,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
+from ..promises import validate_checks
 from .client import MarketError
 from .tools import Toolbox
 
@@ -123,32 +124,44 @@ class ScriptedBrain:
         return BrainResult("completed" if ok else "failed", "\n\n".join(outputs))
 
     def _try_delegate(self, task: Task, skill: str, ctx: AgentContext) -> BrainResult | None:
-        """Hire the cheapest agent selling this skill, if one is affordable and not already in the chain."""
+        """Hire the cheapest agent and tier selling this skill, if one is affordable and not already in the chain.
+
+        Under a promise tier, the task's own checks that the tier allows go along as acceptance checks."""
         chain = set(task.inputs.get("_chain", [])) | {ctx.agent_id}
         offers = []
         for s in ctx.tools.call("list_services", kind="agent", skill=skill):
             if s["provider_id"] in chain:
                 continue
-            plan = s["endpoints"][0]["plan"]
-            offers.append((plan["per_call"], plan["markup_pct"], s))
+            ep = s["endpoints"][0]
+            for p in ep.get("promises") or [None]:
+                fee, markup = (p["fee"], p["markup_pct"]) if p else (ep["plan"]["per_call"], ep["plan"]["markup_pct"])
+                offers.append((fee, markup, s, p))
         if not offers:
             return None
-        fee, markup, offer = min(offers, key=lambda o: (o[0], o[1]))
+        fee, markup, offer, promise = min(offers, key=lambda o: (o[0], o[1]))
         left = min(ctx.remaining(), task.budget)
         sub_budget = round((left - fee) / (1 + markup / 100) * 0.95, 4)  # keep a little slack
+        if promise:
+            sub_budget = min(sub_budget, promise["cost_cap"])
         if sub_budget < MIN_USEFUL_BUDGET.get(skill, 1.0):
             return None
         inputs = {k: v for k, v in task.inputs.items() if k not in ("delegate", "_chain")}
+        terms = {}
+        if promise:
+            checks = [c for c in task.checks if not validate_checks(promise["checks"], [c], inputs)]
+            terms = {"promise": promise["tier"], "promise_version": promise["version"], "checks": checks}
         try:
             receipt = ctx.tools.call("hire_agent", service=offer["name"], description=task.description,
-                                     budget=sub_budget, inputs=inputs)
+                                     budget=sub_budget, inputs=inputs, **terms)
         except MarketError:
             return None
         result = receipt.result or {}
         status = "completed" if receipt.raw["status"] == "ok" else "failed"
+        tier = f", {promise['tier']} tier" if promise else ""
         return BrainResult(
             status,
-            f"Hired {offer['provider']} ({offer['name']}) for {receipt.cost:.4f} WD.\n\n{result.get('output', receipt.error)}",
+            f"Hired {offer['provider']} ({offer['name']}{tier}) for {receipt.cost:.4f} WD.\n\n"
+            f"{result.get('output', receipt.error)}",
         )
 
 
