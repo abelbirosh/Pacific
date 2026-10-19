@@ -60,7 +60,11 @@ def test_concurrent_traffic_with_faults(market):
     assert report["overall"]["statuses"].get("passed", 0) > 15
     assert set(report["by_persona"]) == {"careful", "frugal", "spendthrift", "delegator", "sloppy", "quitter", "adversary"}
     assert report["overall"]["retries"] > 0  # faults were hit and survived
-    assert report["overall"]["max_depth"] >= 2
+    # Agents hired out work. Chains two or more deep are rarer under contracts, since a hired agent gets at
+    # most its tier's cost cap to spend and often can't afford to hire again; test_sim_brain's
+    # test_delegators_build_chains checks deep chains deterministically.
+    assert report["overall"]["max_depth"] >= 1
+    assert report["contracts"]["contracts"] > 0 and report["contracts"]["in_escrow_wd"] == 0
 
 
 def test_deep_delegation_does_not_starve_agent_threads(market):
