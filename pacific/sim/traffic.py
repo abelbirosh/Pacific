@@ -32,6 +32,7 @@ class TrafficConfig:
     think_scale: float = 0.0         # persona pause before decisions (1 = realistic)
     personas: list[str] | None = None  # override every task's persona with one of these
     research: bool = True            # include research tasks (needs offline search or the internet)
+    delegate_rate: float = 0.1       # share of single-skill tasks marked for hiring another agent
     check_every_s: float = 2.0
     task_timeout_s: float = 600
     settle_timeout_s: float = 600    # how long to wait for contracts to finish verifying
@@ -58,7 +59,7 @@ class TaskRecord:
 
 async def run_traffic(exchange_url: str, secrets: dict, cfg: TrafficConfig, progress=None) -> dict:
     rng = random.Random(cfg.seed)
-    workload = Workload(seed=cfg.seed, research=cfg.research)
+    workload = Workload(seed=cfg.seed, research=cfg.research, delegate_rate=cfg.delegate_rate)
     agents = secrets["agents"]
     owner_key = {aid: secrets["people"][a["owner"]]["key"] for aid, a in agents.items()}
     records: list[TaskRecord] = []

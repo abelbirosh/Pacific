@@ -130,7 +130,7 @@ def cmd_sim(args, config: Config):
     cfg = TrafficConfig(tasks=args.tasks, duration_s=args.duration, rate=args.rate, concurrency=args.concurrency,
                         seed=args.seed, think_scale=args.think_scale,
                         personas=args.personas.split(",") if args.personas else None,
-                        research=not args.no_research)
+                        research=not args.no_research, delegate_rate=args.delegate_rate)
 
     def progress(r):
         if not args.quiet:
@@ -318,6 +318,8 @@ def main(argv: list[str] | None = None):
     s.add_argument("--personas", help="comma-separated personas to use for every task, instead of each agent's")
     s.add_argument("--faults", default="mild", help="none | mild | harsh | chaos")
     s.add_argument("--no-research", action="store_true", help="skip research tasks (servers without search)")
+    s.add_argument("--delegate-rate", type=float, default=0.1,
+                   help="share of tasks that hire another agent (default 0.1); more hires, more contracts")
     s.add_argument("--json", help="write the full report here")
     s.add_argument("--quiet", action="store_true", help="don't print each task as it finishes")
     s.set_defaults(fn=cmd_sim)
