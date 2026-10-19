@@ -68,6 +68,26 @@ CREATE TABLE IF NOT EXISTS endpoints (
     PRIMARY KEY (service, name)
 );
 
+-- What an endpoint promises, per tier. Terms are never edited: a change adds the next version and
+-- supersedes the last, so a hire keeps exactly the terms it was quoted. Money is micro-WD.
+CREATE TABLE IF NOT EXISTS promises (
+    id           TEXT PRIMARY KEY,
+    service      TEXT NOT NULL,
+    endpoint     TEXT NOT NULL,
+    tier         TEXT NOT NULL,
+    version      INTEGER NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'active', -- active | superseded | retired
+    fee          INTEGER NOT NULL CHECK (fee >= 0),
+    markup_pct   REAL NOT NULL,
+    cost_cap     INTEGER NOT NULL CHECK (cost_cap > 0),
+    turnaround_s INTEGER NOT NULL,
+    deliverables TEXT NOT NULL,             -- JSON [{name, description}]
+    checks       TEXT NOT NULL,             -- JSON check templates
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    UNIQUE (service, endpoint, tier, version),
+    FOREIGN KEY (service, endpoint) REFERENCES endpoints(service, name)
+);
+
 -- A job is a spending scope with a budget. Delegation creates child jobs.
 CREATE TABLE IF NOT EXISTS jobs (
     id            TEXT PRIMARY KEY,
@@ -92,6 +112,8 @@ CREATE TABLE IF NOT EXISTS calls (
     cost           INTEGER NOT NULL DEFAULT 0,
     units          REAL NOT NULL DEFAULT 0,
     status         TEXT NOT NULL DEFAULT 'pending', -- pending | ok | failed | rejected
+    promise_id     TEXT REFERENCES promises(id), -- the promise version a hire was made under
+    acceptance     TEXT,                    -- JSON: the buyer's acceptance checks for that hire
     error          TEXT,
     latency_ms     INTEGER,
     started_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -117,6 +139,7 @@ CREATE INDEX IF NOT EXISTS idx_tx_call ON transactions(call_id);
 CREATE INDEX IF NOT EXISTS idx_tx_job ON transactions(job_id);
 CREATE INDEX IF NOT EXISTS idx_calls_job ON calls(job_id);
 CREATE INDEX IF NOT EXISTS idx_holds_active ON holds(account_id, status);
+CREATE INDEX IF NOT EXISTS idx_promises_current ON promises(service, endpoint, tier, status);
 """
 
 
@@ -136,9 +159,12 @@ class Database:
 
     def _migrate(self):
         """Add columns introduced after a ledger was created."""
-        cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(tasks)")}
-        if "artifacts" not in cols:
-            self._conn.execute("ALTER TABLE tasks ADD COLUMN artifacts TEXT")
+        for table, column, decl in (("tasks", "artifacts", "TEXT"),
+                                    ("calls", "promise_id", "TEXT REFERENCES promises(id)"),
+                                    ("calls", "acceptance", "TEXT")):
+            cols = {r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     @contextmanager
     def tx(self):

@@ -172,6 +172,10 @@ def cmd_services(args, config: Config):
         print(f"{s['name']}  ({s['kind']}, by {s['provider']})\n  {s['description']}")
         for e in s["endpoints"]:
             print(f"    {e['name']:<13} {e['price']}")
+            for p in e.get("promises", []):
+                checks = ", ".join(sorted({t["type"] for t in p["checks"]}))
+                print(f"      promise {p['terms']}\n        delivers: {'; '.join(d['name'] for d in p['deliverables'])}"
+                      f"   judged by: {checks}")
         print()
 
 

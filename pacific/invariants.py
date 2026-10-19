@@ -10,8 +10,11 @@ job_books            a job's `spent` equals the charges booked against it
 call_overcharged     no call costs more than the hold placed for it
 call_books           a settled call's cost equals the charges booked for it
 delegation_bill      a hire costs fee + seller's spend at cost-plus (or just the spend if it
-                     failed), capped by the hold. Checked once the child job is closed, so a
-                     charge that lands on the child job after the buyer was billed shows up here
+                     failed), capped by the hold, at the terms of the promise version it was made
+                     under if any. Checked once the child job is closed, so a charge that lands
+                     on the child job after the buyer was billed shows up here
+promise_current      each endpoint tier has at most one current promise version
+hire_within_cap      a hire under a promise never gives the seller more budget than its cost cap
 workspace            every storage / database directory belongs to a root job or an account
 
 The exchange adds `unhandled_error` for any exception it didn't handle (it should refuse bad
@@ -29,6 +32,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from . import promises
 from .db import Database
 from .pricing import PricePlan
 
@@ -72,18 +76,28 @@ def check(db: Database, data_dir: Path | None = None, quiescent: bool = False) -
             lambda r: f"{r['id']} cost {r['cost']} but charges total {r['charged']}")
 
         for c in q(
-            "SELECT c.id, c.status, c.cost, c.held, e.plan, j.spent AS child_spent "
+            "SELECT c.id, c.status, c.cost, c.held, e.plan, j.spent AS child_spent, p.fee, p.markup_pct "
             "FROM calls c JOIN jobs j ON j.id = c.child_job_id "
             "JOIN endpoints e ON e.service = c.service AND e.name = c.endpoint "
+            "LEFT JOIN promises p ON p.id = c.promise_id "
             "WHERE c.status != 'pending' AND j.status = 'closed'"
         ):
-            plan = PricePlan.from_dict(json.loads(c["plan"]))
+            plan = promises.plan(c) if c["fee"] is not None else PricePlan.from_dict(json.loads(c["plan"]))
             billed_for = c["child_spent"]
             expected = plan.cost({}, passthrough=billed_for) if c["status"] == "ok" else billed_for
             expected = min(expected, c["held"])
             if c["cost"] != expected:
                 out.append({"invariant": "delegation_bill", "detail": f"{c['id']} ({c['status']}) cost {c['cost']}, "
                             f"expected {expected} from the seller's spend of {billed_for}"})
+
+        flag("promise_current", q(
+            "SELECT service, endpoint, tier, COUNT(*) AS n FROM promises WHERE status = 'active' "
+            "GROUP BY service, endpoint, tier HAVING n > 1"),
+            lambda r: f"{r['service']}/{r['endpoint']} tier {r['tier']} has {r['n']} current versions")
+        flag("hire_within_cap", q(
+            "SELECT c.id, j.budget, p.cost_cap FROM calls c JOIN jobs j ON j.id = c.child_job_id "
+            "JOIN promises p ON p.id = c.promise_id WHERE j.budget > p.cost_cap"),
+            lambda r: f"{r['id']} gave the seller {r['budget']}, over the promise's cost cap of {r['cost_cap']}")
 
         if data_dir is not None:
             owners = {r[0] for r in q("SELECT DISTINCT root_job_id FROM jobs")} | {r[0] for r in q("SELECT id FROM accounts")}
@@ -102,6 +116,7 @@ def check(db: Database, data_dir: Path | None = None, quiescent: bool = False) -
             flag("tasks_finished", q("SELECT id, title FROM tasks WHERE status = 'running'"),
                  lambda r: f"{r['id']} {r['title']}")
 
-        counts = {k: q(f"SELECT COUNT(*) FROM {k}")[0][0] for k in ("accounts", "transactions", "jobs", "calls", "tasks")}
+        counts = {k: q(f"SELECT COUNT(*) FROM {k}")[0][0]
+                  for k in ("accounts", "transactions", "jobs", "calls", "tasks", "promises")}
 
     return {"ok": not out, "quiescent": quiescent, "violations": out, "counts": counts}

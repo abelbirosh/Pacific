@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from . import promises
 from .db import Database
+from .ids import new_id
 from .money import to_micro
 from .pricing import PricePlan
 
@@ -49,6 +51,44 @@ def register_agent_offering(conn: sqlite3.Connection, agent_id: str, agent_name:
     return name
 
 
+def put_promise(conn: sqlite3.Connection, service: str, endpoint: str, tier: str, fee: float, markup_pct: float,
+                cost_cap: float, turnaround_s: int, deliverables: list, checks: list) -> str:
+    """List a tier's promise, or change it: the next version becomes current and the last is superseded."""
+    promises.validate_terms(tier, fee, markup_pct, cost_cap, turnaround_s, deliverables, checks)
+    tiers = {r[0] for r in conn.execute(
+        "SELECT tier FROM promises WHERE service = ? AND endpoint = ? AND status = 'active'", (service, endpoint))}
+    if tier not in tiers and len(tiers) >= promises.MAX_TIERS:
+        raise promises.PromiseError(f"an endpoint can offer at most {promises.MAX_TIERS} tiers")
+    last = conn.execute("SELECT COALESCE(MAX(version), 0) FROM promises WHERE service = ? AND endpoint = ? AND tier = ?",
+                        (service, endpoint, tier)).fetchone()[0]
+    conn.execute("UPDATE promises SET status = 'superseded' WHERE service = ? AND endpoint = ? AND tier = ? "
+                 "AND status = 'active'", (service, endpoint, tier))
+    promise_id = new_id("prom")
+    conn.execute(
+        "INSERT INTO promises(id, service, endpoint, tier, version, fee, markup_pct, cost_cap, turnaround_s, "
+        "deliverables, checks) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (promise_id, service, endpoint, tier, last + 1, to_micro(fee), float(markup_pct), to_micro(cost_cap),
+         turnaround_s, json.dumps(deliverables), json.dumps(checks)),
+    )
+    return promise_id
+
+
+def retire_promise(conn: sqlite3.Connection, service: str, endpoint: str, tier: str) -> bool:
+    """Stop offering a tier. Hires already made under it keep their version."""
+    return conn.execute("UPDATE promises SET status = 'retired' WHERE service = ? AND endpoint = ? AND tier = ? "
+                        "AND status = 'active'", (service, endpoint, tier)).rowcount > 0
+
+
+def promise_dict(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"], "service": row["service"], "endpoint": row["endpoint"], "tier": row["tier"],
+        "version": row["version"], "status": row["status"], "fee": row["fee"], "markup_pct": row["markup_pct"],
+        "cost_cap": row["cost_cap"], "turnaround_s": row["turnaround_s"],
+        "deliverables": json.loads(row["deliverables"]), "checks": json.loads(row["checks"]),
+        "created_at": row["created_at"],
+    }
+
+
 class Registry:
     def __init__(self, db: Database):
         self.db = db
@@ -79,6 +119,7 @@ class Registry:
                     "price": plan.describe(),
                     "plan": plan.to_dict(),
                     "params": json.loads(e["params"]),
+                    "promises": [self.public(p) for p in self.promises(s["name"], e["name"])],
                 })
             out.append({
                 "name": s["name"], "kind": s["kind"], "provider_id": s["provider_id"],
@@ -88,6 +129,28 @@ class Registry:
 
     def plan(self, endpoint_row: sqlite3.Row) -> PricePlan:
         return PricePlan.from_dict(json.loads(endpoint_row["plan"]))
+
+    def promises(self, service: str, endpoint: str, history: bool = False) -> list[dict]:
+        """The tiers an endpoint offers now (or every version ever listed), cheapest first."""
+        rows = self.db.all(
+            "SELECT * FROM promises WHERE service = ? AND endpoint = ? AND (? OR status = 'active') "
+            "ORDER BY fee, markup_pct, tier, version", (service, endpoint, history))
+        return [promise_dict(r) for r in rows]
+
+    def promise(self, service: str, endpoint: str, tier: str) -> dict | None:
+        row = self.db.one("SELECT * FROM promises WHERE service = ? AND endpoint = ? AND tier = ? AND status = 'active'",
+                          (service, endpoint, tier))
+        return promise_dict(row) if row else None
+
+    def promise_by_id(self, promise_id: str) -> dict | None:
+        row = self.db.one("SELECT * FROM promises WHERE id = ?", (promise_id,))
+        return promise_dict(row) if row else None
+
+    @staticmethod
+    def public(p: dict) -> dict:
+        """A promise as the catalog shows it, with money in WD."""
+        return {**p, "fee": p["fee"] / 1_000_000, "cost_cap": p["cost_cap"] / 1_000_000,
+                "terms": promises.describe(p)}
 
 
 def plan_floor(plan: PricePlan) -> int:
