@@ -7,6 +7,9 @@ scripted brain calls the same tools by name. Each invocation is recorded in the 
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +17,17 @@ from typing import Any, Callable
 
 from ..services.search.web import best_passages
 from .client import ExchangeClient, MarketError
+
+# The host runs many brains for one agent at once, each with its own Toolbox on the same notes
+# file, so read-modify-write of that file is serialised per path.
+_notes_locks: dict[Path, threading.Lock] = {}
+_notes_locks_guard = threading.Lock()
+
+
+def _notes_lock(path: Path) -> threading.Lock:
+    key = path.resolve()
+    with _notes_locks_guard:
+        return _notes_locks.setdefault(key, threading.Lock())
 
 
 @dataclass
@@ -162,13 +176,27 @@ class Toolbox:
         return self.client.call(service, "delegate", {**body, **{k: v for k, v in terms.items() if v is not None}})
 
     def _notes(self) -> dict:
-        return json.loads(self.notes_path.read_text()) if self.notes_path.exists() else {}
+        """Current notes; a missing or unreadable file reads as empty rather than crashing the task."""
+        try:
+            notes = json.loads(self.notes_path.read_text())
+        except (FileNotFoundError, ValueError):
+            return {}
+        return notes if isinstance(notes, dict) else {}
 
     def _notes_write(self, key: str, text: str) -> str:
-        notes = self._notes()
-        notes[key] = text
-        self.notes_path.parent.mkdir(parents=True, exist_ok=True)
-        self.notes_path.write_text(json.dumps(notes, indent=2))
+        with _notes_lock(self.notes_path):
+            notes = self._notes()
+            notes[key] = text
+            self.notes_path.parent.mkdir(parents=True, exist_ok=True)
+            # Write a sibling temp file and swap it in, so readers never see a half-written file.
+            fd, tmp = tempfile.mkstemp(dir=self.notes_path.parent, prefix=".notes-", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    json.dump(notes, f, indent=2)
+                os.replace(tmp, self.notes_path)
+            except BaseException:
+                Path(tmp).unlink(missing_ok=True)
+                raise
         return f"saved note {key!r}"
 
     def _notes_read(self, key: str | None = None):
